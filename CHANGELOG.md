@@ -7,4 +7,4 @@
 - Qwen3 8B, 30B-A3B, Coder-Next and 235B benchmark data.
 - IQ3_M memory-cliff telemetry.
 - Vulkan build helper, model downloader and v3.5 benchmark harness.
-- Reddit TL;DR and polished DOCX guide.
+- Reddit TL;DR and long-form Markdown guide.
