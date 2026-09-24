@@ -1,0 +1,41 @@
+name: Publish v1.0.0 release
+
+on:
+  push:
+    branches:
+      - release-v1.0.0-assets
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release asset branch
+        uses: actions/checkout@v4
+
+      - name: Reconstruct frozen release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cat release-assets/docx.part-* | base64 --decode > dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx
+          cat release-assets/zip.part-*  | base64 --decode > dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip
+          echo "ebd8b3ebf075944ff41803df8dda56f6eeb23213718e90146e5f78963a0a48d9  dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx" | sha256sum -c -
+          echo "5aa30b7e429556c8cdc98e895130ec16ce48f9fa2ef0c69fd9b27335316356a3  dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip" | sha256sum -c -
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            echo "v1.0.0 already exists; uploading/replacing assets only."
+            gh release upload v1.0.0               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip               --clobber
+          else
+            gh release create v1.0.0               --target "$MAIN_SHA"               --title "v1.0.0 — Strix Halo 128 GB Local LLM Guide"               --notes-file release-assets/RELEASE_NOTES.md               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip
+          fi
