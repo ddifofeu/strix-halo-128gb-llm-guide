@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="340" viewBox="0 0 1100 340">
+<style>text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:26px;font-weight:700}.sub{font-size:15px;fill:#4b5563}.lab{font-size:15px}.val{font-size:14px;font-weight:600}.grid{stroke:#e5e7eb;stroke-width:1}.bar{fill:#2563eb}</style>
+<rect width="100%" height="100%" fill="white"/><text x="30" y="38" class="title">Qwen3 235B IQ3_M — memory cliff</text><text x="30" y="65" class="sub">Peak GPU-addressed allocation: 64 GiB UMA times out; 96 GiB UMA passes</text>
+<line x1="290.0" y1="85" x2="290.0" y2="295" class="grid"/><text x="290.0" y="324" text-anchor="middle" class="sub">0</text>
+<line x1="436.0" y1="85" x2="436.0" y2="295" class="grid"/><text x="436.0" y="324" text-anchor="middle" class="sub">21</text>
+<line x1="582.0" y1="85" x2="582.0" y2="295" class="grid"/><text x="582.0" y="324" text-anchor="middle" class="sub">41</text>
+<line x1="728.0" y1="85" x2="728.0" y2="295" class="grid"/><text x="728.0" y="324" text-anchor="middle" class="sub">62</text>
+<line x1="874.0" y1="85" x2="874.0" y2="295" class="grid"/><text x="874.0" y="324" text-anchor="middle" class="sub">83</text>
+<line x1="1020.0" y1="85" x2="1020.0" y2="295" class="grid"/><text x="1020.0" y="324" text-anchor="middle" class="sub">104</text>
+<text x="276" y="118" text-anchor="end" class="lab">64 GiB UMA — VRAM</text><rect x="290" y="100" width="450.0" height="28" rx="5" class="bar"/><text x="750.0" y="119" class="val">63.86 GiB</text>
+<text x="276" y="173" text-anchor="end" class="lab">64 GiB UMA — GTT</text><rect x="290" y="155" width="265.9" height="28" rx="5" class="bar"/><text x="565.9" y="174" class="val">37.74 GiB</text>
+<text x="276" y="228" text-anchor="end" class="lab">96 GiB UMA — VRAM</text><rect x="290" y="210" width="675.9" height="28" rx="5" class="bar"/><text x="975.9" y="229" class="val">95.93 GiB</text>
+<text x="276" y="283" text-anchor="end" class="lab">96 GiB UMA — GTT</text><rect x="290" y="265" width="39.2" height="28" rx="5" class="bar"/><text x="339.2" y="284" class="val">5.56 GiB</text>
+</svg>
