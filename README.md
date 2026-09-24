@@ -4,7 +4,7 @@ A measured, reproducible guide for running large GGUF models on a **128 GB AMD S
 
 > **TL;DR:** For an AI-first 128 GB Strix Halo box, **96 GiB UMA (`UMA_SPECIFIED`) + llama.cpp Vulkan + `-ngl 99` + default `load-mode=auto` / `lazy-mode=auto`** was the best tested configuration. It did not materially reduce throughput on 5–45 GiB models, and it changed Qwen3 235B IQ3_M (~100 GiB) from a 600 s memory-thrashing timeout at 64 GiB UMA into a clean **165.9 tok/s PP512 / 17.05 tok/s TG128** run with essentially zero swap.
 
-![64 vs 96 GiB UMA](graphs/uma_throughput_comparison.png)
+![64 vs 96 GiB UMA](graphs/uma_throughput_comparison.svg)
 
 ## Key findings
 
@@ -97,7 +97,7 @@ These flags were **not isolated experimentally**, so they are recorded for repro
 | Llama 3.3 70B | Q4_K_M | 39.60 GiB | 64 | 106.02 | 4.81 |
 | Qwen3 235B-A22B | IQ2_M | 73.16 GiB | 64 | 163.06 | 20.07 |
 
-![Generation throughput](graphs/generation_throughput_64gb.png)
+![Generation throughput](graphs/generation_throughput_64gb.svg)
 
 ## The 64 → 96 GiB UMA result
 
@@ -114,7 +114,7 @@ The most important A/B test was Qwen3 235B IQ3_M (~99.96 GiB):
 | Peak swap | 4,025 MiB | **0 MiB** |
 | Major faults | 193,127 | **0** |
 
-![IQ3_M memory cliff](graphs/iq3m_memory_cliff.png)
+![IQ3_M memory cliff](graphs/iq3m_memory_cliff.svg)
 
 The loader was not the root cause: `load-mode=none / lazy-mode=off` also timed out at 64 GiB UMA. At 96 GiB UMA, both `none/off` and `auto/auto` passed, and `auto/auto` was slightly cleaner.
 
@@ -160,7 +160,7 @@ For the ~100 GiB IQ3_M test, 96 GiB UMA is strongly recommended based on the mea
 ```text
 scripts/   build, verify, downloader, benchmark harness
 data/      normalized benchmark CSV
-graphs/    generated charts
+graphs/    generated SVG charts
 docs/      detailed guide, methodology, Reddit TL;DR
 ```
 
