@@ -1,0 +1,7 @@
+cff-version: 1.2.0
+title: "Bosgame Strix Halo 128 GB Local LLM Guide"
+message: "If you reuse the benchmark data, please cite the repository and note the tested hardware/software configuration."
+type: software
+version: 1.0.0
+date-released: 2026-09-24
+license: MIT
