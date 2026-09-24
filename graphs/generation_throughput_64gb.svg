@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="505" viewBox="0 0 1100 505">
+<style>text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:26px;font-weight:700}.sub{font-size:15px;fill:#4b5563}.lab{font-size:15px}.val{font-size:14px;font-weight:600}.grid{stroke:#e5e7eb;stroke-width:1}.bar{fill:#2563eb}</style>
+<rect width="100%" height="100%" fill="white"/><text x="30" y="38" class="title">Generation throughput — 64 GiB UMA</text><text x="30" y="65" class="sub">llama.cpp Vulkan, TG128, 3 repetitions</text>
+<line x1="290.0" y1="85" x2="290.0" y2="460" class="grid"/><text x="290.0" y="489" text-anchor="middle" class="sub">0</text>
+<line x1="436.0" y1="85" x2="436.0" y2="460" class="grid"/><text x="436.0" y="489" text-anchor="middle" class="sub">18</text>
+<line x1="582.0" y1="85" x2="582.0" y2="460" class="grid"/><text x="582.0" y="489" text-anchor="middle" class="sub">37</text>
+<line x1="728.0" y1="85" x2="728.0" y2="460" class="grid"/><text x="728.0" y="489" text-anchor="middle" class="sub">55</text>
+<line x1="874.0" y1="85" x2="874.0" y2="460" class="grid"/><text x="874.0" y="489" text-anchor="middle" class="sub">74</text>
+<line x1="1020.0" y1="85" x2="1020.0" y2="460" class="grid"/><text x="1020.0" y="489" text-anchor="middle" class="sub">92</text>
+<text x="276" y="118" text-anchor="end" class="lab">Qwen3 30B-A3B</text><rect x="290" y="100" width="675.9" height="28" rx="5" class="bar"/><text x="975.9" y="119" class="val">85.50 tok/s</text>
+<text x="276" y="173" text-anchor="end" class="lab">Qwen3-Coder-Next</text><rect x="290" y="155" width="453.9" height="28" rx="5" class="bar"/><text x="753.9" y="174" class="val">57.42 tok/s</text>
+<text x="276" y="228" text-anchor="end" class="lab">Qwen3 8B</text><rect x="290" y="210" width="323.8" height="28" rx="5" class="bar"/><text x="623.8" y="229" class="val">40.96 tok/s</text>
+<text x="276" y="283" text-anchor="end" class="lab">Qwen3 235B IQ2_M</text><rect x="290" y="265" width="158.7" height="28" rx="5" class="bar"/><text x="458.7" y="284" class="val">20.07 tok/s</text>
+<text x="276" y="338" text-anchor="end" class="lab">Qwen3 235B IQ3_XS</text><rect x="290" y="320" width="140.8" height="28" rx="5" class="bar"/><text x="440.8" y="339" class="val">17.81 tok/s</text>
+<text x="276" y="393" text-anchor="end" class="lab">Mistral Small 24B</text><rect x="290" y="375" width="112.7" height="28" rx="5" class="bar"/><text x="412.7" y="394" class="val">14.26 tok/s</text>
+<text x="276" y="448" text-anchor="end" class="lab">Llama 3.3 70B</text><rect x="290" y="430" width="38.0" height="28" rx="5" class="bar"/><text x="338.0" y="449" class="val">4.81 tok/s</text>
+</svg>
