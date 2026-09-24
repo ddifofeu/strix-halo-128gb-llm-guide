@@ -1,0 +1,16 @@
+uma_gib,model,quant,class,gguf_gib,params_b,architecture,pp512_tps,tg128_tps,result,load_mode,lazy_mode,min_available_ram_mb,peak_swap_mb,peak_vram_mb,peak_gtt_mb,major_faults,notes
+64,Qwen3 8B,Q4_K_M,baseline,4.68,8.19,Dense,1055.49,40.96,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Mistral Small 3.1 24B,Q4_K_M,baseline,13.35,23.57,Dense,358.88,14.26,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Qwen3 30B-A3B,Q4_K_M,moe,17.35,30.53,MoE (~3B active),1279.09,85.5,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Llama 3.3 70B,Q4_K_M,large,39.6,70.55,Dense,106.02,4.81,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Qwen3-Coder-Next,Q4_K_M,cyber-code,45.09,79.67,MoE (~3B active),750.9,57.42,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Qwen3 235B-A22B,IQ2_M,huge,73.16,235.09,MoE (~22B active),163.06,20.07,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Qwen3 235B-A22B,IQ3_XS,huge,90.25,235.09,MoE (~22B active),164.78,17.81,pass,auto,auto,,,,,,64 GiB baseline suite
+64,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),,,timeout,auto,auto,2678,4025,65395,38645,193127,600 s timeout before PP/TG
+64,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),,,timeout,none,off,1066,3850,65350,38644,234957,600 s timeout before PP/TG; zram correctly prioritized
+96,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),165.73,17.15,pass,none,off,13121,0,98195,5671,324,96 GiB UMA A/B
+96,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),165.94,17.05,pass,auto,auto,13264,0,98233,5697,0,Recommended loader mode
+96,Qwen3 235B-A22B,IQ3_XS,huge,90.25,235.09,MoE (~22B active),169.26,18.07,pass,auto,auto,18595,0,93577,369,0,96 GiB validation
+96,Qwen3 8B,Q4_K_M,baseline,4.68,8.19,Dense,1056.98,41.35,pass,auto,auto,18524,0,5923,452,1,96 GiB control
+96,Qwen3 30B-A3B,Q4_K_M,moe,17.35,30.53,MoE (~3B active),1279.6,85.52,pass,auto,auto,18692,0,19015,274,0,96 GiB control
+96,Qwen3-Coder-Next,Q4_K_M,cyber-code,45.09,79.67,MoE (~3B active),747.41,57.53,pass,auto,auto,18648,0,47461,273,4,96 GiB control
