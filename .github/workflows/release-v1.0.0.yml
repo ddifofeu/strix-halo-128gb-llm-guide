@@ -13,29 +13,65 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out release asset branch
+      - name: Check out frozen release branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Reconstruct frozen release assets
+      - name: Install document tooling
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc librsvg2-bin
+
+      - name: Build frozen ZIP and DOCX
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          cat release-assets/docx.part-* | base64 --decode > dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx
-          cat release-assets/zip.part-*  | base64 --decode > dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip
-          echo "ebd8b3ebf075944ff41803df8dda56f6eeb23213718e90146e5f78963a0a48d9  dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx" | sha256sum -c -
-          echo "5aa30b7e429556c8cdc98e895130ec16ce48f9fa2ef0c69fd9b27335316356a3  dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip" | sha256sum -c -
 
-      - name: Publish GitHub release
+          # Clean source archive: tracked files only, no .git directory.
+          git archive             --format=zip             --prefix=bosgame-strix-halo-128gb-llm-guide-v1.0.0/             --output=dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip             HEAD
+
+          # Build a shareable DOCX from the detailed guide and measured charts.
+          cp docs/GUIDE.md /tmp/release-guide.md
+          cat >> /tmp/release-guide.md <<'EOF'
+
+          ## Benchmark charts
+
+          ### 64 vs 96 GiB UMA throughput
+
+          ![64 vs 96 GiB UMA throughput](graphs/uma_throughput_comparison.svg)
+
+          ### 64 GiB baseline generation throughput
+
+          ![Generation throughput](graphs/generation_throughput_64gb.svg)
+
+          ### Qwen3 235B IQ3_M memory cliff
+
+          ![IQ3_M memory cliff](graphs/iq3m_memory_cliff.svg)
+
+          ### Model size vs generation throughput
+
+          ![Model size vs generation throughput](graphs/model_size_vs_generation.svg)
+          EOF
+
+          pandoc /tmp/release-guide.md             --from=gfm             --to=docx             --resource-path=".:docs:graphs"             --metadata title="Bosgame Strix Halo 128 GB Local LLM Guide"             --output=dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx
+
+          sha256sum dist/* | tee dist/SHA256SUMS.txt
+
+      - name: Publish v1.0.0
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+
           MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+
           if gh release view v1.0.0 >/dev/null 2>&1; then
-            echo "v1.0.0 already exists; uploading/replacing assets only."
-            gh release upload v1.0.0               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip               --clobber
+            echo "Release v1.0.0 already exists; replacing assets."
+            gh release upload v1.0.0               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip               dist/SHA256SUMS.txt               --clobber
           else
-            gh release create v1.0.0               --target "$MAIN_SHA"               --title "v1.0.0 — Strix Halo 128 GB Local LLM Guide"               --notes-file release-assets/RELEASE_NOTES.md               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip
+            gh release create v1.0.0               --target "$MAIN_SHA"               --title "v1.0.0 — Strix Halo 128 GB Local LLM Guide"               --notes-file release-assets/RELEASE_NOTES.md               dist/Bosgame_Strix_Halo_128GB_Local_LLM_Guide.docx               dist/Bosgame_Strix_Halo_128GB_Guide_v1.0.0.zip               dist/SHA256SUMS.txt
           fi
