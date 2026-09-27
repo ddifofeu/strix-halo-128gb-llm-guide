@@ -200,7 +200,7 @@ For the 73–100 GiB class, 96 GiB UMA is strongly recommended based on the meas
 scripts/   build, verify, downloader, benchmark harness
 data/      normalized benchmark CSV
 graphs/    generated SVG charts
-docs/      detailed guide, methodology, Reddit TL;DR
+docs/      detailed guide and methodology
 ```
 
 ## Important limitations
