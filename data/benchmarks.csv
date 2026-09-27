@@ -1,4 +1,9 @@
 uma_gib,model,quant,class,gguf_gib,params_b,architecture,pp512_tps,tg128_tps,result,load_mode,lazy_mode,min_available_ram_mb,peak_swap_mb,peak_vram_mb,peak_gtt_mb,major_faults,notes
+0.5,Qwen3 8B,Q4_K_M,baseline,4.68,8.19,Dense,1029.64,41.35,pass,auto,auto,107987,54,468,5904,311,"512 MiB UMA; elapsed 16.128 s; 784032 VM page faults"
+0.5,Qwen3-Coder-Next,Q4_K_M,cyber-code,45.09,79.67,MoE (~3B active),724.62,57.84,pass,auto,auto,66563,0,462,47115,224,"512 MiB UMA; elapsed 48.113 s; 2169277 VM page faults"
+0.5,Qwen3 235B-A22B,IQ2_M,huge,73.16,235.09,MoE (~22B active),,,timeout,auto,auto,23944,1915,473,75067,20585,"512 MiB UMA first run; elapsed 302.878 s; 13638831 VM page faults; timeout before PP/TG"
+0.5,Qwen3 235B-A22B,IQ2_M,huge,73.16,235.09,MoE (~22B active),,,timeout,auto,auto,22308,0,458,74985,1021,"512 MiB UMA clean-swap rerun; elapsed 601.178 s; 29711338 VM page faults; timeout before PP/TG"
+0.5,Qwen3 235B-A22B,IQ3_XS,huge,90.25,235.09,MoE (~22B active),,,timeout,auto,auto,267,16270,504,92558,1328937,"512 MiB UMA; elapsed 302.571 s; 12747891 VM page faults; severe reclaim/swap; timeout before PP/TG"
 64,Qwen3 8B,Q4_K_M,baseline,4.68,8.19,Dense,1055.49,40.96,pass,auto,auto,,,,,,64 GiB baseline suite
 64,Mistral Small 3.1 24B,Q4_K_M,baseline,13.35,23.57,Dense,358.88,14.26,pass,auto,auto,,,,,,64 GiB baseline suite
 64,Qwen3 30B-A3B,Q4_K_M,moe,17.35,30.53,MoE (~3B active),1279.09,85.5,pass,auto,auto,,,,,,64 GiB baseline suite
@@ -8,6 +13,7 @@ uma_gib,model,quant,class,gguf_gib,params_b,architecture,pp512_tps,tg128_tps,res
 64,Qwen3 235B-A22B,IQ3_XS,huge,90.25,235.09,MoE (~22B active),164.78,17.81,pass,auto,auto,,,,,,64 GiB baseline suite
 64,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),,,timeout,auto,auto,2678,4025,65395,38645,193127,600 s timeout before PP/TG
 64,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),,,timeout,none,off,1066,3850,65350,38644,234957,600 s timeout before PP/TG; zram correctly prioritized
+96,Qwen3 235B-A22B,IQ2_M,huge,73.16,235.09,MoE (~22B active),170.09,20.40,pass,auto,auto,18420,0,76128,351,266,"96 GiB UMA three-way control; elapsed 91.004 s; 5106292 VM page faults"
 96,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),165.73,17.15,pass,none,off,13121,0,98195,5671,324,96 GiB UMA A/B
 96,Qwen3 235B-A22B,IQ3_M,capacity,99.96,235.09,MoE (~22B active),165.94,17.05,pass,auto,auto,13264,0,98233,5697,0,Recommended loader mode
 96,Qwen3 235B-A22B,IQ3_XS,huge,90.25,235.09,MoE (~22B active),169.26,18.07,pass,auto,auto,18595,0,93577,369,0,96 GiB validation
