@@ -1,11 +1,68 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="420" viewBox="0 0 1100 420">
-<style>text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:26px;font-weight:700}.sub{font-size:15px;fill:#4b5563}.lab{font-size:14px}.val{font-size:13px;font-weight:600}.grid{stroke:#e5e7eb}.a{fill:#64748b}.b{fill:#2563eb}</style>
-<rect width="100%" height="100%" fill="white"/><text x="60" y="38" class="title">64 vs 96 GiB UMA — generation throughput</text><text x="60" y="64" class="sub">TG128 tokens/s; same Vulkan backend and llama.cpp build</text>
-<line x1="80" y1="330" x2="1060" y2="330" class="grid"/><line x1="80" y1="250" x2="1060" y2="250" class="grid"/><line x1="80" y1="170" x2="1060" y2="170" class="grid"/><line x1="80" y1="90" x2="1060" y2="90" class="grid"/>
-<text x="62" y="334" class="sub" text-anchor="end">0</text><text x="62" y="254" class="sub" text-anchor="end">30</text><text x="62" y="174" class="sub" text-anchor="end">60</text><text x="62" y="94" class="sub" text-anchor="end">90</text>
-<rect x="810" y="28" width="14" height="14" class="a"/><text x="830" y="40" class="sub">64 GiB UMA</text><rect x="930" y="28" width="14" height="14" class="b"/><text x="950" y="40" class="sub">96 GiB UMA</text>
-<g><rect x="145" y="220.8" width="48" height="109.2" class="a"/><rect x="198" y="219.7" width="48" height="110.3" class="b"/><text x="195" y="360" text-anchor="middle" class="lab">Qwen3 8B</text><text x="169" y="214" text-anchor="middle" class="val">40.96</text><text x="222" y="213" text-anchor="middle" class="val">41.35</text></g>
-<g><rect x="385" y="102.0" width="48" height="228.0" class="a"/><rect x="438" y="101.9" width="48" height="228.1" class="b"/><text x="435" y="360" text-anchor="middle" class="lab">Qwen3 30B-A3B</text><text x="409" y="95" text-anchor="middle" class="val">85.50</text><text x="462" y="95" text-anchor="middle" class="val">85.52</text></g>
-<g><rect x="625" y="176.9" width="48" height="153.1" class="a"/><rect x="678" y="176.6" width="48" height="153.4" class="b"/><text x="675" y="360" text-anchor="middle" class="lab">Coder-Next</text><text x="649" y="170" text-anchor="middle" class="val">57.42</text><text x="702" y="170" text-anchor="middle" class="val">57.53</text></g>
-<g><rect x="865" y="282.5" width="48" height="47.5" class="a"/><rect x="918" y="281.8" width="48" height="48.2" class="b"/><text x="915" y="360" text-anchor="middle" class="lab">235B IQ3_XS</text><text x="889" y="276" text-anchor="middle" class="val">17.81</text><text x="942" y="275" text-anchor="middle" class="val">18.07</text></g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470">
+<style>
+text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:26px;font-weight:700}.sub{font-size:15px;fill:#4b5563}.lab{font-size:14px}.val{font-size:12px;font-weight:600}.grid{stroke:#e5e7eb}.u512{fill:#64748b}.u64{fill:#d97706}.u96{fill:#2563eb}.timeout{stroke:#dc2626;stroke-width:4}.timeoutText{font-size:12px;font-weight:700;fill:#b91c1c}
+</style>
+<rect width="100%" height="100%" fill="white"/>
+<text x="60" y="38" class="title">512 MiB vs 64 vs 96 GiB UMA — generation throughput</text>
+<text x="60" y="64" class="sub">TG128 tokens/s; same Vulkan/RADV backend and llama.cpp build. Red × = no inference before timeout.</text>
+
+<line x1="80" y1="370" x2="1160" y2="370" class="grid"/>
+<line x1="80" y1="280" x2="1160" y2="280" class="grid"/>
+<line x1="80" y1="190" x2="1160" y2="190" class="grid"/>
+<line x1="80" y1="100" x2="1160" y2="100" class="grid"/>
+<text x="62" y="374" class="sub" text-anchor="end">0</text>
+<text x="62" y="284" class="sub" text-anchor="end">30</text>
+<text x="62" y="194" class="sub" text-anchor="end">60</text>
+<text x="62" y="104" class="sub" text-anchor="end">90</text>
+
+<rect x="735" y="28" width="14" height="14" class="u512"/><text x="755" y="40" class="sub">512 MiB</text>
+<rect x="840" y="28" width="14" height="14" class="u64"/><text x="860" y="40" class="sub">64 GiB</text>
+<rect x="930" y="28" width="14" height="14" class="u96"/><text x="950" y="40" class="sub">96 GiB</text>
+<line x1="1045" y1="29" x2="1057" y2="41" class="timeout"/><line x1="1057" y1="29" x2="1045" y2="41" class="timeout"/><text x="1065" y="40" class="sub">timeout</text>
+
+<!-- Qwen3 8B -->
+<g>
+<rect x="145" y="245.95" width="38" height="124.05" class="u512"/>
+<rect x="188" y="247.12" width="38" height="122.88" class="u64"/>
+<rect x="231" y="245.95" width="38" height="124.05" class="u96"/>
+<text x="207" y="404" text-anchor="middle" class="lab">Qwen3 8B</text>
+<text x="164" y="239" text-anchor="middle" class="val">41.35</text>
+<text x="207" y="240" text-anchor="middle" class="val">40.96</text>
+<text x="250" y="239" text-anchor="middle" class="val">41.35</text>
+</g>
+
+<!-- Coder-Next -->
+<g>
+<rect x="405" y="196.48" width="38" height="173.52" class="u512"/>
+<rect x="448" y="197.74" width="38" height="172.26" class="u64"/>
+<rect x="491" y="197.41" width="38" height="172.59" class="u96"/>
+<text x="467" y="404" text-anchor="middle" class="lab">Coder-Next</text>
+<text x="424" y="190" text-anchor="middle" class="val">57.84</text>
+<text x="467" y="191" text-anchor="middle" class="val">57.42</text>
+<text x="510" y="191" text-anchor="middle" class="val">57.53</text>
+</g>
+
+<!-- IQ2_M -->
+<g>
+<line x1="680" y1="343" x2="698" y2="361" class="timeout"/><line x1="698" y1="343" x2="680" y2="361" class="timeout"/>
+<rect x="708" y="309.79" width="38" height="60.21" class="u64"/>
+<rect x="751" y="308.80" width="38" height="61.20" class="u96"/>
+<text x="727" y="404" text-anchor="middle" class="lab">235B IQ2_M</text>
+<text x="689" y="337" text-anchor="middle" class="timeoutText">&gt;601s</text>
+<text x="727" y="303" text-anchor="middle" class="val">20.07</text>
+<text x="770" y="302" text-anchor="middle" class="val">20.40</text>
+</g>
+
+<!-- IQ3_XS -->
+<g>
+<line x1="940" y1="343" x2="958" y2="361" class="timeout"/><line x1="958" y1="343" x2="940" y2="361" class="timeout"/>
+<rect x="968" y="316.57" width="38" height="53.43" class="u64"/>
+<rect x="1011" y="315.79" width="38" height="54.21" class="u96"/>
+<text x="987" y="404" text-anchor="middle" class="lab">235B IQ3_XS</text>
+<text x="949" y="337" text-anchor="middle" class="timeoutText">&gt;302s</text>
+<text x="987" y="310" text-anchor="middle" class="val">17.81</text>
+<text x="1030" y="309" text-anchor="middle" class="val">18.07</text>
+</g>
+
+<text x="620" y="447" text-anchor="middle" class="sub">512 MiB matches small/medium-model generation speed but does not reach inference on the tested 73–90 GiB models.</text>
 </svg>
