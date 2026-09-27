@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440">
+<style>
+text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:26px;font-weight:700}.sub{font-size:15px;fill:#4b5563}.row{font-size:16px;font-weight:600}.grid{stroke:#e5e7eb}.axis{stroke:#9ca3af;stroke-width:2}.pass{fill:#16a34a}.fail{stroke:#dc2626;stroke-width:5}.nt{fill:white;stroke:#9ca3af;stroke-width:2}.lab{font-size:12px;fill:#374151}
+</style>
+<rect width="100%" height="100%" fill="white"/>
+<text x="35" y="38" class="title">Observed model-capacity boundary by UMA profile</text>
+<text x="35" y="64" class="sub">Green = benchmark reached inference; red × = timed out before PP/TG; open circle = not tested.</text>
+
+<line x1="270" y1="105" x2="1110" y2="105" class="axis"/>
+<line x1="270" y1="105" x2="270" y2="365" class="grid"/>
+<line x1="430" y1="105" x2="430" y2="365" class="grid"/>
+<line x1="590" y1="105" x2="590" y2="365" class="grid"/>
+<line x1="750" y1="105" x2="750" y2="365" class="grid"/>
+<line x1="910" y1="105" x2="910" y2="365" class="grid"/>
+<line x1="1070" y1="105" x2="1070" y2="365" class="grid"/>
+<text x="270" y="95" text-anchor="middle" class="sub">0</text>
+<text x="430" y="95" text-anchor="middle" class="sub">20</text>
+<text x="590" y="95" text-anchor="middle" class="sub">40</text>
+<text x="750" y="95" text-anchor="middle" class="sub">60</text>
+<text x="910" y="95" text-anchor="middle" class="sub">80</text>
+<text x="1070" y="95" text-anchor="middle" class="sub">100 GiB</text>
+
+<text x="245" y="145" text-anchor="end" class="row">512 MiB UMA</text>
+<text x="245" y="245" text-anchor="end" class="row">64 GiB UMA</text>
+<text x="245" y="345" text-anchor="end" class="row">96 GiB UMA</text>
+
+<!-- labels -->
+<text x="307.4" y="393" text-anchor="middle" class="lab">4.68</text>
+<text x="630.7" y="409" text-anchor="middle" class="lab">45.09</text>
+<text x="855.3" y="393" text-anchor="middle" class="lab">73.16</text>
+<text x="992.0" y="409" text-anchor="middle" class="lab">90.25</text>
+<text x="1069.7" y="393" text-anchor="middle" class="lab">99.96</text>
+
+<!-- 512 MiB row -->
+<circle cx="307.4" cy="140" r="9" class="pass"/>
+<circle cx="630.7" cy="140" r="9" class="pass"/>
+<line x1="847.3" y1="132" x2="863.3" y2="148" class="fail"/><line x1="863.3" y1="132" x2="847.3" y2="148" class="fail"/>
+<line x1="984.0" y1="132" x2="1000.0" y2="148" class="fail"/><line x1="1000.0" y1="132" x2="984.0" y2="148" class="fail"/>
+<circle cx="1069.7" cy="140" r="9" class="nt"/>
+
+<!-- 64 GiB row -->
+<circle cx="307.4" cy="240" r="9" class="pass"/>
+<circle cx="630.7" cy="240" r="9" class="pass"/>
+<circle cx="855.3" cy="240" r="9" class="pass"/>
+<circle cx="992.0" cy="240" r="9" class="pass"/>
+<line x1="1061.7" y1="232" x2="1077.7" y2="248" class="fail"/><line x1="1077.7" y1="232" x2="1061.7" y2="248" class="fail"/>
+
+<!-- 96 GiB row -->
+<circle cx="307.4" cy="340" r="9" class="pass"/>
+<circle cx="630.7" cy="340" r="9" class="pass"/>
+<circle cx="855.3" cy="340" r="9" class="pass"/>
+<circle cx="992.0" cy="340" r="9" class="pass"/>
+<circle cx="1069.7" cy="340" r="9" class="pass"/>
+
+<text x="35" y="423" class="sub">Test points shown at GGUF sizes 4.68, 45.09, 73.16, 90.25 and 99.96 GiB. 512 MiB IQ3_M was not run after the smaller large-model failures.</text>
+</svg>
