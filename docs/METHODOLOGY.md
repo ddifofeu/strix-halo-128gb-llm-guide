@@ -2,60 +2,66 @@
 
 ## Purpose
 
-Measure real local-LLM throughput and the practical memory boundary of a 128 GB Strix Halo APU using llama.cpp/Vulkan.
+Measure practical local-LLM capacity and throughput on a 128 GB Strix Halo APU, then select a stable daily inference stack for the tested Bosgame M5.
 
-## Software
+## Final host stack
 
-- Ubuntu 24.04.5 LTS
-- Linux 6.17.0-35-generic
-- llama.cpp build 11149, commit `d2e54583c`
-- Vulkan/RADV GFX1151
+- Ubuntu 24.04.5 LTS host
+- Linux 6.18.7
+- upstream in-tree `amdgpu`
+- BIOS UMA 512 MiB
+- `amdgpu.gttsize=126976`
+- `ttm.pages_limit=32505856`
+- `amd_iommu=off` for the dedicated performance runs
+- zram 31.2 GiB priority 100 plus 4 GiB disk swap priority -2
 
-## Benchmark settings
+The older 6.17 / 112 GiB-GTT / external-driver measurements remain in `data/benchmarks.csv` as historical controls and must not be mixed causally with the corrected 6.18.7 stack.
 
-Unless stated otherwise:
+## Final Vulkan benchmark settings
+
+Unless explicitly labeled otherwise:
 
 ```text
 -ngl 99
+-fa on
+-lm none
+-lzm auto
 PP512
 TG128
-3 repetitions
-load-mode auto
-lazy-mode auto
+5 repetitions for final backend comparisons
 ```
 
-`--capacity` in the supplied harness uses one combined llama-bench invocation so very large models are loaded only once.
+The v3.6 harness records Flash Attention, load mode and lazy mode in its result files.
 
-## Telemetry
+## Capacity validation
 
-The v3.5 harness records:
+The corrected 512 MiB UMA stack was validated with Qwen3 235B IQ2_M (~73 GiB), IQ3_XS (~90 GiB) and IQ3_M (~100 GiB). All three reached inference with zero swap. This establishes a tested capacity through ~100 GiB, not through the entire nominal GTT aperture.
 
-- minimum Linux `MemAvailable`
-- peak swap
-- peak AMDGPU VRAM usage
-- peak AMDGPU GTT usage
-- llama process virtual/RSS measurements
-- `/proc/vmstat` page-fault / swap activity
-- NVMe diskstats deltas
-- CPU/GPU/NVMe temperatures
+## Userspace A/B
 
-## A/B rules
+To estimate the effect of the newer userspace Vulkan stack, the same llama.cpp binary and llama/ggml libraries (`d2e54583c`, build 11149) were executed both natively and inside the Fedora 44 `vulkan-radv` toolbox. This holds llama.cpp constant but does not isolate Mesa alone: the Vulkan loader and other userspace libraries also differ.
 
-The critical 64 vs 96 GiB UMA comparison kept the following constant:
+## Backend A/B
 
-- model and quantization
-- llama.cpp build
-- Vulkan backend
+The final Vulkan-vs-ROCm comparison used:
+
+- Fedora 44 base
+- llama.cpp build 11206 / `2b129ccfa`
+- Qwen3 235B IQ3_M
 - `-ngl 99`
-- PP512/TG128
-- timeout
-- load/lazy mode within each paired test
+- `-fa on`
+- PP512 / TG128 / combined
 
-Only BIOS fixed UMA changed.
+Vulkan tested both `lm=auto` and `lm=none`. ROCm tested the same. ROCm `lm=auto` exhibited pathological TG behavior and is recorded as a compatibility/performance failure mode rather than a normal throughput result.
 
-## Interpretation cautions
+## Telemetry and interpretation
 
-- Page cache can make subsequent model loads faster; throughput after load is the more stable comparison.
-- `free` and `available` are not equivalent; low `free` with high `available` is normal after reading large GGUF files.
-- Vulkan's reported addressable heap can exceed physical RAM because it includes GPU virtual/GTT address space.
-- Synthetic PP/TG throughput is not quality, TTFT at long contexts, or full chat latency.
+The benchmark harness records RAM, swap, AMDGPU VRAM/GTT, process RSS/VSZ, VM paging counters, NVMe I/O and temperatures.
+
+Interpretation rules:
+
+- PP/TG are throughput measurements, not model-quality scores.
+- Repeated PP differences must exceed run-to-run spread before being treated as meaningful.
+- A zero-swap capacity pass is stronger evidence than nominal Vulkan/ROCm addressable-memory size.
+- Results from different kernels/driver stacks are not causal UMA A/B tests.
+- `VMM: no` reported by ROCm is recorded as an implementation detail; no causal performance claim is made from that flag alone.

@@ -1,224 +1,149 @@
 # Bosgame Strix Halo 128 GB — Local LLM Guide
 
-A measured, reproducible guide for running large GGUF models on a **128 GB AMD Strix Halo** system, tested on a Bosgame M5 with a Ryzen AI MAX+ 395 / Radeon 8060S under Ubuntu 24.04.
+A measured, reproducible guide for running large GGUF models on a **128 GB AMD Strix Halo** system, tested on a Bosgame M5 with a Ryzen AI MAX+ 395 / Radeon 8060S.
 
-> **TL;DR:** For an AI-first 128 GB Strix Halo box, **96 GiB UMA (`UMA_SPECIFIED`) + llama.cpp Vulkan + `-ngl 99` + default `load-mode=auto` / `lazy-mode=auto`** is the best tested overall profile. A new three-way test of **512 MiB / 64 GiB / 96 GiB UMA** showed that 512 MiB performs essentially the same on 5–45 GiB models, but hits a severe practical GTT cliff by the ~73 GiB model class. The same 73.16 GiB Qwen3 235B IQ2_M timed out after **601 s** at 512 MiB UMA but completed in **91 s** at 96 GiB UMA at **170.09 tok/s PP512 / 20.40 tok/s TG128**.
+> **Final tested conclusion (27 Sep 2026):** on this machine, the best overall local-LLM configuration is **512 MiB BIOS UMA + the corrected Linux 6.18.7/upstream-amdgpu large-GTT setup + Kyuz0's stable Fedora 44 `vulkan-radv` toolbox + Flash Attention on + no-mmap (`load-mode=none`) + lazy mode auto**. This configuration runs the tested **Qwen3 235B IQ3_M (~99.95 GiB)** without swap and is faster than the tested ROCm 10.0 path on the same llama.cpp commit.
 
-![512 MiB vs 64 vs 96 GiB UMA](graphs/uma_throughput_comparison.svg)
+This supersedes the earlier repo conclusion that 96 GiB fixed UMA was required for the ~100 GiB model class. The old 512 MiB failures were real, but they occurred on a different, confounded software/kernel/GTT stack and therefore were **not an intrinsic 512 MiB UMA capacity limit**.
 
-## Key findings
+## Final profile for this Bosgame M5
 
-- **96 GiB UMA is the best tested AI-first profile** for this 128 GB system: small/mid-size throughput is essentially unchanged while 73–100 GiB GGUFs run cleanly.
-- **64 GiB UMA remains the best tested mixed-workstation compromise** if you need substantially more conventional host RAM and can accept a practical ceiling below the ~100 GiB model class.
-- **512 MiB UMA is a host-RAM-first profile, not the best large-LLM profile.** It leaves ~124 GiB visible to Linux and is excellent through the tested ~45 GiB class, but 73.16 GiB and 90.25 GiB models timed out under the tested large-GTT path.
-- **Qwen3 30B-A3B Q4_K_M** is the measured throughput sweet spot: ~**85.5 tok/s generation**.
-- **Qwen3-Coder-Next Q4_K_M** is the measured coding-oriented sweet spot: ~**57.5–57.8 tok/s generation** at ~45 GiB across the tested UMA profiles.
-- **Qwen3 235B IQ3_XS** is the measured large-model balance point: ~**18.1 tok/s** at 96 GiB UMA.
-- **Qwen3 235B IQ3_M** works at ~**17.1 tok/s** with 96 GiB UMA but crosses a severe memory/reclaim cliff at 64 GiB UMA.
-- These are **throughput/capacity benchmarks, not model-quality scores**.
-
-![Observed capacity by UMA profile](graphs/uma_capacity_comparison.svg)
-
-## Tested host
-
-| Component | Measured/tested configuration |
+| Layer | Final tested setting |
 |---|---|
-| System | Bosgame M5, 128 GB RAM |
-| SoC | AMD Ryzen AI MAX+ 395 |
-| GPU | Radeon 8060S / GFX1151 |
-| OS | Ubuntu 24.04.5 LTS |
-| Kernel | 6.17.0-35-generic |
-| Mesa / Vulkan | RADV, GFX1151 |
-| llama.cpp | build 11149, commit `d2e54583c` |
-| Backend | Vulkan |
-| Benchmark | `llama-bench`, PP512 / TG128, 3 repetitions |
+| BIOS UMA | **512 MiB** |
+| Kernel | **6.18.7**, upstream in-tree `amdgpu` |
+| GTT | `amdgpu.gttsize=126976` |
+| TTM pages | `ttm.pages_limit=32505856` |
+| IOMMU | `amd_iommu=off` for the dedicated benchmark/performance profile |
+| Container/userspace | **Kyuz0 `vulkan-radv`**, Fedora 44 |
+| Mesa/RADV | **26.2.3** in the validated toolbox image |
+| llama.cpp | build **11206**, commit `2b129ccfa` for the final backend comparison |
+| Backend | **Vulkan / RADV** |
+| GPU layers | `-ngl 99` |
+| Flash Attention | **`-fa on`** |
+| Load mode | **`-lm none`** (no-mmap) |
+| Lazy mode | **`-lzm auto`** |
 
-## Recommended setup
+`amd_iommu=off` removes DMA isolation and can affect VFIO/passthrough and security assumptions. It is a performance-profile choice, not a universal desktop recommendation. Kyuz0's broader guidance uses an IOMMU passthrough profile; this host measured a reproducible PP improvement with IOMMU disabled, but only one IOMMU-on reference run was collected.
 
-### BIOS / firmware
+## Why this conclusion changed
 
-For an LLM-first machine:
+The first campaign compared 512 MiB, 64 GiB and 96 GiB BIOS UMA on Linux 6.17 with a different AMDGPU stack and a 112 GiB GTT aperture. Under that stack, 512 MiB UMA hit a severe practical cliff on 73–90 GiB models and 64 GiB UMA failed on the ~100 GiB IQ3_M model.
 
-```text
-iGPU Configuration:      UMA_SPECIFIED
-UMA Frame Buffer Size:   96G
-```
+The corrected campaign changed several variables together: Linux 6.18.7, external DKMS removal in favor of upstream `amdgpu`, GTT from 114,688 to 126,976 MiB, and TTM pages from 30,720,000 to 32,505,856. With BIOS UMA still at **512 MiB**, all three large Qwen3 235B quants tested successfully with zero swap:
 
-Observed memory layouts on this host:
+| Model | GGUF | PP512 | TG128 | Result | Peak swap |
+|---|---:|---:|---:|---|---:|
+| Qwen3 235B IQ2_M | 73.16 GiB | 163.30 | 19.98 | PASS | 0 MiB |
+| Qwen3 235B IQ3_XS | 90.25 GiB | 160.67 | 17.78 | PASS | 0 MiB |
+| Qwen3 235B IQ3_M | 99.95 GiB | 156.78 | 17.05 | PASS | 0 MiB |
 
-| BIOS UMA | Linux-visible RAM | Fixed VRAM/UMA | GTT aperture | Vulkan-reported addressable memory |
-|---|---:|---:|---:|---:|
-| 512 MiB | ~124 GiB | 512 MiB | 114,688 MiB | 115,200 MiB |
-| 64 GiB | ~62 GiB | 65,536 MiB | 114,688 MiB | 180,224 MiB |
-| 96 GiB | ~30 GiB | 98,304 MiB | 114,688 MiB | 212,992 MiB |
+These runs establish capacity through ~100 GiB on this corrected stack. They do **not** isolate which of kernel, driver, GTT or TTM changes fixed the old cliff.
 
-For mixed desktop/VM/container workloads, 64 GiB UMA may be more comfortable. 512 MiB maximizes host-visible RAM, but the measurements below show that a very large GTT aperture is not equivalent to fixed UMA for large-model startup and inference.
+## The biggest performance gain: newer RADV userspace
 
-**`Auto` was not benchmarked.** Do not assume it selects the same reservation.
+The strongest performance result came from running the **same llama.cpp binary** (`d2e54583c`, build 11149) inside Kyuz0's Fedora 44 `vulkan-radv` toolbox. The llama/ggml libraries stayed from the host build while the container supplied the newer userspace Vulkan stack.
 
-### llama.cpp
+For Qwen3 235B IQ3_M:
 
-Build Vulkan support using the upstream-supported `GGML_VULKAN` CMake option. Upstream also documents `-ngl 99` as a way to offload all layers for most models on Vulkan.
-
-```bash
-scripts/build-llama-vulkan.sh
-```
-
-Recommended runtime defaults from these tests:
-
-```text
-GPU layers: 99
-Load mode:  auto
-Lazy mode:  auto
-Backend:    Vulkan / RADV
-```
-
-### Swap
-
-The successful test configuration used zram ahead of disk swap:
-
-```text
-/dev/zram0  priority 100
-/swapfile   priority -2
-```
-
-Do not use swap as a substitute for fitting the model. The 512 MiB IQ3_XS failure peaked at ~16.3 GiB swap and 1.33 million major faults, while the cleaner 512 MiB IQ2_M rerun still failed to reach inference after 601 s with **zero swap**, showing that the large-GTT failure cannot be explained by swap alone.
-
-### Kernel/GTT caveat
-
-The measured host booted with:
-
-```text
-amdgpu.gttsize=114688 ttm.pages_limit=30720000
-```
-
-These flags were **not isolated experimentally**, so they are recorded for reproducibility, not recommended as universal defaults. Current Linux kernel documentation marks `amdgpu.gttsize` as **deprecated**. New users should start with kernel defaults and change advanced memory parameters only with measurements.
-
-## Three-way UMA comparison
-
-Generation throughput where all compared runs reached inference:
-
-| Model | GGUF | 512 MiB UMA | 64 GiB UMA | 96 GiB UMA |
-|---|---:|---:|---:|---:|
-| Qwen3 8B Q4_K_M | 4.68 GiB | **41.35** | 40.96 | **41.35** |
-| Qwen3-Coder-Next Q4_K_M | 45.09 GiB | **57.84** | 57.42 | 57.53 |
-| Qwen3 235B IQ2_M | 73.16 GiB | **timeout >601 s** | 20.07 | **20.40** |
-| Qwen3 235B IQ3_XS | 90.25 GiB | **timeout >302 s** | 17.81 | **18.07** |
-| Qwen3 235B IQ3_M | 99.96 GiB | not run | **timeout >600 s** | **17.05** |
-
-The 512 MiB profile therefore has no meaningful generation-speed advantage on the small/medium models where it succeeds. Its advantage is host RAM availability. Once the working allocation grows into the 73–90 GiB class, the tested GTT-backed path becomes operationally impractical.
-
-### Exact 73.16 GiB IQ2_M comparison
-
-| Qwen3 235B IQ2_M | 512 MiB UMA | 64 GiB UMA | 96 GiB UMA |
+| Stack | PP512 | TG128 | Combined |
 |---|---:|---:|---:|
-| Result | **timeout >601 s** | pass | **pass** |
-| PP512 | — | 163.06 | **170.09** |
-| TG128 | — | 20.07 | **20.40** |
-| Peak VRAM | 458 MiB | — | **76,128 MiB** |
-| Peak GTT | **74,985 MiB** | — | **351 MiB** |
-| Minimum available host RAM | 22,308 MiB | — | 18,420 MiB |
-| Peak swap | **0 MiB** | — | **0 MiB** |
-| Major faults | 1,021 | — | 266 |
+| Native Ubuntu/RADV, IOMMU off, same llama.cpp | 163.11 | 17.13 | 59.04 |
+| Fedora 44 / Mesa RADV 26.2.3, same llama.cpp | **193.19** | **17.39** | **62.51** |
 
-The 512 MiB rerun is particularly important: it retained ~22 GiB of available host RAM and used no swap, yet still failed to reach PP/TG after ten minutes. This supports a practical large-GTT allocation/mapping cliff rather than a simple out-of-RAM explanation.
+That is approximately **+18.4% PP**, **+1.5% TG** and **+5.9% combined** with the same llama.cpp build. This is a userspace-stack comparison rather than a pure Mesa-only A/B, but RADV/Mesa is the dominant changed GPU component.
 
-## The ~100 GiB memory cliff
+## Final Vulkan vs ROCm comparison
 
-The earlier Qwen3 235B IQ3_M (~99.96 GiB) A/B remains the upper-capacity result:
+The final backend test used the **same llama.cpp commit** (`2b129ccfa`, build 11206), Fedora 44 base, Qwen3 235B IQ3_M, `-ngl 99`, Flash Attention on and five repetitions.
 
-| IQ3_M | 64 GiB UMA | 96 GiB UMA |
-|---|---:|---:|
-| Result | timeout >600 s | **pass** |
-| PP512 | — | **165.94 tok/s** |
-| TG128 | — | **17.05 tok/s** |
-| Peak VRAM | 65,395 MiB | 98,233 MiB |
-| Peak GTT | 38,645 MiB | 5,697 MiB |
-| Minimum available host RAM | 2,678 MiB | 13,264 MiB |
-| Peak swap | 4,025 MiB | **0 MiB** |
-| Major faults | 193,127 | **0** |
+| Backend / load mode | PP512 | TG128 | Combined | Notes |
+|---|---:|---:|---:|---|
+| **Vulkan/RADV, `lm=none`** | **198.53** | **17.34** | **62.84** | Final recommended profile |
+| Vulkan/RADV, `lm=auto` | 198.93 | 17.30 | 62.70 | Effectively tied with `none` |
+| ROCm 10.0, `lm=none` | 188.03 | 15.65 | 57.58 | Stable but slower |
+| ROCm 10.0, `lm=auto` | 187.18 | 2.42 | 39.88 ± 25.85 | Pathological TG behavior; avoid for this workload |
 
-![IQ3_M memory cliff](graphs/iq3m_memory_cliff.svg)
+On this ~100 GiB MoE model, the recommended Vulkan result is about **+5.6% PP**, **+10.8% TG** and **+9.1% combined** versus the stable ROCm `lm=none` run.
 
-The loader was not the root cause: `load-mode=none / lazy-mode=off` also timed out at 64 GiB UMA. At 96 GiB UMA, both `none/off` and `auto/auto` passed, and `auto/auto` was slightly cleaner.
+This is a conclusion for **this hardware + model + current stacks**, not a claim that Vulkan is universally faster than ROCm on every Strix Halo workload.
 
-## Performance snapshot
+## Runtime tuning results
 
-| Model | Quant | GGUF | UMA | PP512 tok/s | TG128 tok/s |
-|---|---|---:|---:|---:|---:|
-| Qwen3 8B | Q4_K_M | 4.68 GiB | 96 | 1056.98 | 41.35 |
-| Qwen3 30B-A3B | Q4_K_M | 17.35 GiB | 96 | 1279.60 | **85.52** |
-| Qwen3-Coder-Next | Q4_K_M | 45.09 GiB | 96 | 747.41 | **57.53** |
-| Qwen3 235B-A22B | IQ2_M | 73.16 GiB | 96 | 170.09 | **20.40** |
-| Qwen3 235B-A22B | IQ3_XS | 90.25 GiB | 96 | 169.26 | **18.07** |
-| Qwen3 235B-A22B | IQ3_M | 99.96 GiB | 96 | 165.94 | **17.05** |
-| Mistral Small 3.1 24B | Q4_K_M | 13.35 GiB | 64 | 358.88 | 14.26 |
-| Llama 3.3 70B | Q4_K_M | 39.60 GiB | 64 | 106.02 | 4.81 |
+### Flash Attention
 
-![Generation throughput](graphs/generation_throughput_64gb.svg)
+Controlled same-invocation testing showed `-fa on` was the best PP/TG choice. `-fa off` was clearly worse. Keep Flash Attention explicitly enabled rather than relying on `auto` for benchmark/reproducibility work.
 
-## Model recommendations
+### Load mode
 
-These are **hardware-efficiency recommendations**, not assertions about task quality.
-
-| Use case | Suggested model / quant | Why |
-|---|---|---|
-| Fast capable general use | Qwen3 30B-A3B Q4_K_M | ~85.5 tok/s; excellent MoE efficiency |
-| Coding / local engineering | Qwen3-Coder-Next Q4_K_M | ~57.5–57.8 tok/s; ~45 GiB footprint |
-| Small / low footprint | Qwen3 8B Q4_K_M | ~41 tok/s; ~4.7 GiB |
-| Large model, best measured balance | Qwen3 235B IQ3_XS | ~18.1 tok/s; ~90 GiB; negligible GTT at 96 GiB UMA |
-| Higher-bit 235B option | Qwen3 235B IQ3_M | ~17.1 tok/s; works cleanly with 96 GiB UMA |
-| Smaller 235B footprint | Qwen3 235B IQ2_M | ~20.4 tok/s at 96 GiB UMA; lower-bit quantization |
-
-If a dense model is required for model-quality reasons, use it; however the measured dense models delivered far lower token-generation throughput than the tested MoE models on this machine.
-
-## Reproduce
-
-```bash
-# 1. Inspect your machine
-scripts/verify-strix-halo.sh
-
-# 2. Build llama.cpp with Vulkan
-scripts/build-llama-vulkan.sh
-
-# 3. Optional: download the benchmark model set (hundreds of GiB)
-scripts/download-models.sh --list
-scripts/download-models.sh
-
-# 4. Run a small control
-scripts/strix-halo-bench.sh --model qwen3-8b --capacity
-
-# 5. Run a large-model capacity test
-scripts/strix-halo-bench.sh --model qwen3-235b-iq3xs --capacity
-```
-
-For the 73–100 GiB class, 96 GiB UMA is strongly recommended based on the measurements in this repo.
-
-## Repository layout
+On the current Kyuz0 Vulkan stack, `load-mode=none` and `auto` were effectively tied. Because Kyuz0 recommends Flash Attention + no-mmap on Strix Halo and `none` did not cost throughput here, the final profile uses:
 
 ```text
-scripts/   build, verify, downloader, benchmark harness
-data/      normalized benchmark CSV
-graphs/    generated SVG charts
-docs/      detailed guide and methodology
+-fa on
+-lm none
+-lzm auto
 ```
+
+Do not combine this conclusion with the old `none/off` experiment: forcing `lazy-mode=off` was a separate change and performed worse on the older native stack.
+
+### TuneD
+
+`accelerator-performance` did not produce a measurable gain over `balanced` on this Bosgame. Keep `balanced` for normal use; there is no evidence from these measurements that the accelerator profile is needed.
+
+### IOMMU
+
+With the current native Vulkan stack, three IOMMU-off runs averaged roughly 162.89 PP / 17.13 TG / 59.06 combined versus one IOMMU-on reference at 154.57 / 17.31 / 58.46. The PP gain reproduced across the off runs, while TG was slightly lower. Because the on side was not replicated, treat this as a host-specific performance observation rather than a universal rule.
+
+## Reproduce the recommended userspace
+
+The validated stable toolbox comes from:
+
+- https://github.com/kyuz0/amd-strix-halo-toolboxes
+- image: `docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv`
+
+On this Ubuntu host, Distrobox 1.8.2.5 was required for reliable container setup.
+
+Example benchmark inside `llama-vulkan-radv`:
+
+```bash
+/usr/bin/llama-bench \
+  -m /path/to/Qwen_Qwen3-235B-A22B-Instruct-2507-IQ3_M-00001-of-00003.gguf \
+  -ngl 99 \
+  -lm none \
+  -lzm auto \
+  -fa on \
+  -pg 512,128 \
+  -r 5
+```
+
+The updated `scripts/strix-halo-bench.sh` defaults to these final Vulkan tuning values and records Flash Attention alongside load/lazy mode.
+
+## Historical UMA findings: keep, but do not generalize
+
+The old 512 MiB / 64 GiB / 96 GiB results remain useful evidence about the **older** stack. They show that the software/kernel memory path matters enormously. They no longer support the statement that large fixed UMA is inherently required for 73–100 GiB GGUFs.
+
+The fair statement is now:
+
+> On this Bosgame M5, **512 MiB BIOS UMA can run GGUF models through ~100 GiB when paired with the corrected Linux 6.18.7/upstream-amdgpu large-GTT configuration**. The previous 512 MiB failures were stack-specific and the exact corrective variable was not isolated.
+
+## Benchmark files
+
+- `data/benchmarks.csv` — original UMA campaign
+- `data/corrected-capacity.csv` — corrected 512 MiB capacity validation
+- `data/backend-comparison.csv` — final Vulkan/userspace/ROCm comparison
+- `scripts/strix-halo-bench.sh` — v3.6 benchmark harness, defaulting to FA on / load none / lazy auto
+- `docs/GUIDE.md` — detailed findings and caveats
+- `docs/METHODOLOGY.md` — methodology and interpretation rules
 
 ## Important limitations
 
-- One physical 128 GB Bosgame/Strix Halo machine was measured; firmware, cooling, RAM topology and kernels may differ.
-- Model filenames/repos can change.
-- PP512 and TG128 are synthetic throughput tests. They are not end-to-end chat latency, TTFT at long context, or quality benchmarks.
-- Context scaling and KV-cache pressure at 8K/32K/64K were not measured here.
-- `Auto` BIOS UMA mode was not measured.
-- The 512 MiB test used the same unusually large 114,688 MiB GTT aperture as the other profiles; do not generalize this result to all kernel/driver configurations.
-- No claim is made that Vulkan is faster than HIP/ROCm; this guide documents a known-good Vulkan path.
-
-## Upstream references
-
-- llama.cpp build documentation: https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md
-- llama.cpp server/CLI load-mode documentation: https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
-- Linux AMDGPU module parameters: https://docs.kernel.org/gpu/amdgpu/module-parameters.html
+- One physical Bosgame M5 / Ryzen AI MAX+ 395 / 128 GB machine was measured.
+- The corrected 512 MiB success changed kernel, AMDGPU provenance, GTT and TTM together. The exact root cause of the old failure is not isolated.
+- The final Vulkan-vs-ROCm comparison is for Qwen3 235B IQ3_M and should not be generalized to every model, quant or context length.
+- PP512/TG128 are synthetic throughput measurements, not task-quality scores or long-context end-to-end latency.
+- The current validation ceiling is **~100 GiB GGUF**, not the full nominal 124 GiB GTT aperture.
+- IOMMU-off has security and virtualization trade-offs.
 
 ## License
 
-MIT for scripts and documentation in this repository. Model licenses remain those of their respective model publishers.
+MIT for scripts and documentation in this repository. Model licenses remain those of their respective publishers.

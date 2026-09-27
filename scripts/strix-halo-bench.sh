@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Strix Halo LLM Characterization Suite v3.5
+# Strix Halo LLM Characterization Suite v3.6
 # Adds explicit llama.cpp load-mode/lazy-mode A/B controls and records them in results.
 # Capacity mode uses a single combined PP+TG invocation so huge models load once.
 
@@ -11,11 +11,12 @@ TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 RESULT_DIR="$RESULT_ROOT/$TIMESTAMP"
 
 GPU_LAYERS="${GPU_LAYERS:-99}"
-LOAD_MODE="${LOAD_MODE:-auto}"
+LOAD_MODE="${LOAD_MODE:-none}"
 LAZY_MODE="${LAZY_MODE:-auto}"
+FLASH_ATTN="${FLASH_ATTN:-on}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-512}"
 GEN_TOKENS="${GEN_TOKENS:-128}"
-REPETITIONS="${REPETITIONS:-3}"
+REPETITIONS="${REPETITIONS:-5}"
 LOAD_TIMEOUT="${LOAD_TIMEOUT:-300}"
 TELEMETRY_INTERVAL="${TELEMETRY_INTERVAL:-0.5}"
 MAX_SWAP_GROWTH_MB="${MAX_SWAP_GROWTH_MB:-4096}"
@@ -71,6 +72,7 @@ Environment:
   GPU_LAYERS=$GPU_LAYERS
   LOAD_MODE=$LOAD_MODE
   LAZY_MODE=$LAZY_MODE
+  FLASH_ATTN=$FLASH_ATTN
   PROMPT_TOKENS=$PROMPT_TOKENS
   GEN_TOKENS=$GEN_TOKENS
   REPETITIONS=$REPETITIONS
@@ -161,6 +163,10 @@ if ! grep -q -- '--lazy-mode' <<< "$LLAMA_HELP"; then
   fail "This llama-bench build does not expose --lazy-mode."
   exit 1
 fi
+if ! grep -q -- '--flash-attn' <<< "$LLAMA_HELP"; then
+  fail "This llama-bench build does not expose --flash-attn."
+  exit 1
+fi
 
 case "$LOAD_MODE" in
   auto|none|mmap|mlock|mmap+mlock|dio) ;;
@@ -170,11 +176,11 @@ case "$LAZY_MODE" in
   on|auto|off) ;;
   *) fail "Invalid LAZY_MODE=$LAZY_MODE (expected on|auto|off)"; exit 1 ;;
 esac
+case "$FLASH_ATTN" in
+  on|off|auto) ;;
+  *) fail "Invalid FLASH_ATTN=$FLASH_ATTN (expected on|off|auto)"; exit 1 ;;
+esac
 
-if [[ "$LOAD_MODE" == "none" && "$LAZY_MODE" != "off" ]]; then
-  warn "LOAD_MODE=none with LAZY_MODE=$LAZY_MODE: upstream documents lazy loading as requiring mmap."
-  warn "For a controlled no-mmap experiment, use LAZY_MODE=off."
-fi
 
 model_exists_in_catalog() {
   local requested="$1" entry id quant class
@@ -333,7 +339,7 @@ TELEMETRY="$RESULT_DIR/telemetry.csv"
 echo "timestamp,elapsed_s,model,phase,wrapper_pid,llama_pid,rss_mb,vsz_mb,mem_available_mb,swap_used_mb,vram_used_mb,gtt_used_mb,cpu_temp_c,gpu_temp_c,nvme_temp_c,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta" > "$TELEMETRY"
 
 PHASE_SUMMARY="$RESULT_DIR/phase-summary.csv"
-echo "model,phase,load_mode,lazy_mode,status,wall_s,pp_tps,tg_tps,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta,time_max_rss_kb,time_major_faults,time_minor_faults,time_fs_inputs,time_fs_outputs" > "$PHASE_SUMMARY"
+echo "model,phase,load_mode,lazy_mode,flash_attn,status,wall_s,pp_tps,tg_tps,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta,time_max_rss_kb,time_major_faults,time_minor_faults,time_fs_inputs,time_fs_outputs" > "$PHASE_SUMMARY"
 
 TELEMETRY_PID=""
 
@@ -466,7 +472,7 @@ parse_gnu_time() {
 }
 
 SUMMARY="$RESULT_DIR/summary.csv"
-echo "model,quant,class,size_gib,gpu_layers,load_mode,lazy_mode,status,pp_tps,tg_tps,elapsed_s,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta" > "$SUMMARY"
+echo "model,quant,class,size_gib,gpu_layers,load_mode,lazy_mode,flash_attn,status,pp_tps,tg_tps,elapsed_s,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta" > "$SUMMARY"
 
 LAST_ELAPSED="0"
 LAST_RC=0
@@ -506,6 +512,7 @@ run_llama_bench() {
           -ngl "$GPU_LAYERS" \
           -lm "$LOAD_MODE" \
           -lzm "$LAZY_MODE" \
+          -fa "$FLASH_ATTN" \
           -p "$prompt" \
           -n "$generation" \
           -r "$REPETITIONS" \
@@ -518,6 +525,7 @@ run_llama_bench() {
         -ngl "$GPU_LAYERS" \
         -lm "$LOAD_MODE" \
         -lzm "$LAZY_MODE" \
+        -fa "$FLASH_ATTN" \
         -p "$prompt" \
         -n "$generation" \
         -r "$REPETITIONS" \
@@ -549,7 +557,7 @@ run_llama_bench() {
   else phase_status="failed"
   fi
 
-  echo "$id,$phase,$LOAD_MODE,$LAZY_MODE,$phase_status,$LAST_ELAPSED,${LAST_PP:-},${LAST_TG:-},$min_mem,$max_swap,$max_vram,$max_gtt,$max_rss,$max_vsz,$pgf,$pgmaj,$swi,$swo,$pgi,$pgo,$nvr,$nvw,$t_rss,$t_maj,$t_min,$t_in,$t_out" >> "$PHASE_SUMMARY"
+  echo "$id,$phase,$LOAD_MODE,$LAZY_MODE,$FLASH_ATTN,$phase_status,$LAST_ELAPSED,${LAST_PP:-},${LAST_TG:-},$min_mem,$max_swap,$max_vram,$max_gtt,$max_rss,$max_vsz,$pgf,$pgmaj,$swi,$swo,$pgi,$pgo,$nvr,$nvw,$t_rss,$t_maj,$t_min,$t_in,$t_out" >> "$PHASE_SUMMARY"
 
   return "$rc"
 }
@@ -608,6 +616,7 @@ benchmark_model() {
   echo "GPU layers:        $GPU_LAYERS"
   echo "Load mode:         $LOAD_MODE"
   echo "Lazy mode:         $LAZY_MODE"
+  echo "Flash Attention:   $FLASH_ATTN"
   echo "Timeout/test:      ${LOAD_TIMEOUT}s"
   echo "Telemetry:         ${TELEMETRY_INTERVAL}s"
   echo "Capacity mode:     $CAPACITY_MODE"
@@ -674,7 +683,7 @@ benchmark_model() {
   IFS=',' read -r min_mem max_swap max_vram max_gtt max_rss max_vsz pgf pgmaj swi swo pgi pgo nvr nvw \
     <<< "$(telemetry_model_summary "$id")"
 
-  echo "$id,$quant,$class,$size_gib,$GPU_LAYERS,$LOAD_MODE,$LAZY_MODE,$status,${pp:-},${tg:-},$total_elapsed,$min_mem,$max_swap,$max_vram,$max_gtt,$max_rss,$max_vsz,$pgf,$pgmaj,$swi,$swo,$pgi,$pgo,$nvr,$nvw" >> "$SUMMARY"
+  echo "$id,$quant,$class,$size_gib,$GPU_LAYERS,$LOAD_MODE,$LAZY_MODE,$FLASH_ATTN,$status,${pp:-},${tg:-},$total_elapsed,$min_mem,$max_swap,$max_vram,$max_gtt,$max_rss,$max_vsz,$pgf,$pgmaj,$swi,$swo,$pgi,$pgo,$nvr,$nvw" >> "$SUMMARY"
 
   echo
   echo "---------------- RESULT ----------------"
@@ -713,7 +722,7 @@ benchmark_model() {
 
 FINAL_EXIT=0
 
-section "STRIX HALO CHARACTERIZATION v3.5"
+section "STRIX HALO CHARACTERIZATION v3.6"
 echo "Started:             $(date -Is)"
 echo "Hostname:            $(hostname)"
 echo "Model directory:     $MODEL_DIR"
@@ -721,6 +730,7 @@ echo "Results:             $RESULT_DIR"
 echo "GPU layers:          $GPU_LAYERS"
 echo "Load mode:           $LOAD_MODE"
 echo "Lazy mode:           $LAZY_MODE"
+echo "Flash Attention:     $FLASH_ATTN"
 echo "Timeout/test:        ${LOAD_TIMEOUT}s"
 echo "Telemetry interval:  ${TELEMETRY_INTERVAL}s"
 echo "GNU time:            ${GNU_TIME:-not available}"

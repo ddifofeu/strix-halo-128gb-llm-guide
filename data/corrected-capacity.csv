@@ -1,0 +1,4 @@
+model,quant,gguf_gib,pp512_tps,tg128_tps,result,load_mode,lazy_mode,min_available_ram_mb,peak_swap_mb,peak_vram_mb,peak_gtt_mb,major_faults,elapsed_s,host_stack
+Qwen3 235B-A22B,IQ2_M,73.16,163.30,19.98,pass,auto,auto,38475,0,493,75915,226,64.744,"512 MiB UMA; Linux 6.18.7; upstream amdgpu; GTT 126976; TTM 32505856"
+Qwen3 235B-A22B,IQ3_XS,90.25,160.67,17.78,pass,auto,auto,20820,0,482,93422,5,74.594,"512 MiB UMA; Linux 6.18.7; upstream amdgpu; GTT 126976; TTM 32505856"
+Qwen3 235B-A22B,IQ3_M,99.95,156.78,17.05,pass,auto,auto,10603,0,483,103370,58,79.458,"512 MiB UMA; Linux 6.18.7; upstream amdgpu; GTT 126976; TTM 32505856"
