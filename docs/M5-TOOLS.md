@@ -39,6 +39,8 @@ The displayed DRAM bandwidth is explicitly an estimate. It is useful as a relati
 
 Source: **tools/bosgame-m5-fans/**
 
+![Bosgame M5 fan control GUI](images/bosgame-m5-fans.png)
+
 Install prerequisites and run the read-only diagnostic first:
 
 ~~~bash
