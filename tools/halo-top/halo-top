@@ -1,0 +1,997 @@
+#!/usr/bin/env bash
+
+# halo-top: Advanced AMD Strix Halo (RDNA 3.5 / gfx1151) Performance Diagnostic Tool
+# Optimized for upstream amdgpu, ROCm/HIP LLM runtimes, and low monitoring overhead.
+# Version 0.1.0 (Bosgame M5 / Strix Halo field-tested baseline).
+
+HALO_TOP_VERSION="0.1.0"
+set -u
+
+# --- Terminal Formatting & Palette (Health-Based) ---
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_DIM="\033[2m"
+C_CYAN="\033[36m"
+C_MAGENTA="\033[35m"
+C_GREEN="\033[32m"
+C_YELLOW="\033[33m"
+C_RED="\033[31m"
+C_BLUE="\033[34m"
+C_WHITE="\033[97m"
+
+# --- CLI Options & Flag Processing ---
+LOG_FILE=""
+JSONL_FILE=""
+BENCHMARK_MODE=0
+BENCHMARK_DURATION=0
+REFRESH_SEC=1
+
+show_help() {
+    cat << HELP_EOF
+halo-top: AMD Strix Halo Telemetry and LLM Performance Diagnostic Monitor
+
+Usage: halo-top [OPTIONS]
+
+Version: ${HALO_TOP_VERSION}
+
+Options:
+  -l, --log <file.csv>       Log telemetry data to CSV file.
+  -j, --jsonl <file.jsonl>   Stream rich telemetry records to JSONL.
+  -b, --benchmark [seconds] Run in headless/reduced benchmark mode and print summary.
+  -r, --rate <seconds>       Sampling interval in seconds (default: 1).
+  -h, --help                 Display this help information.
+
+Interactive Controls:
+  [q] Quit                   [r] Reset history, peaks & baselines
+  [m] Insert benchmark mark  [d] Toggle low-level diagnostic view
+  [+/-] Adjust refresh rate
+HELP_EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -l|--log) LOG_FILE="$2"; shift 2 ;;
+        -j|--jsonl) JSONL_FILE="$2"; shift 2 ;;
+        -b|--benchmark)
+            BENCHMARK_MODE=1
+            if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
+                BENCHMARK_DURATION="$2"; shift 2
+            else
+                shift 1
+            fi
+            ;;
+        -r|--rate) REFRESH_SEC="$2"; shift 2 ;;
+        -h|--help) show_help ;;
+        *) echo "Unknown option: $1"; show_help ;;
+    esac
+done
+
+# --- Robust Hardware & Driver Discovery ---
+CARD=""
+for c in /sys/class/drm/card[0-9]*; do
+    [[ ! -d "$c/device" ]] && continue
+    vendor=$(cat "$c/device/vendor" 2>/dev/null || echo "")
+    if [[ "$vendor" == "0x1002" && -f "$c/device/mem_info_gtt_total" ]]; then
+        CARD="$c"
+        break
+    fi
+done
+
+if [[ -z "$CARD" ]]; then
+    echo -e "${C_RED}Error: AMDGPU gfx1151 device not found under /sys/class/drm/.${C_RESET}"
+    exit 1
+fi
+DEV="$CARD/device"
+
+# Discover Hardware Monitoring Node (hwmon)
+HWMON=$(ls -d "$DEV"/hwmon/hwmon* 2>/dev/null | head -n1)
+TEMP_INPUT="$HWMON/temp1_input"
+TEMP_CRIT="$HWMON/temp1_crit"
+if [[ -f "$HWMON/temp2_input" && $(cat "$HWMON/temp2_input" 2>/dev/null || echo 0) -gt 0 ]]; then
+    TEMP_INPUT="$HWMON/temp2_input"
+    TEMP_CRIT="$HWMON/temp2_crit"
+fi
+
+# Bosgame M5 Platform EC Driver Discovery
+EC_DIR="/sys/class/ec_su_axb35"
+HAS_EC=0
+[[ -d "$EC_DIR" ]] && HAS_EC=1
+
+# Cached Startup Configuration
+KERNEL_VER=$(uname -r)
+PCI_ID=$(basename "$(readlink -f "$DEV")")
+CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2 | sed 's/^[ \t]*/ /')
+# Prefer the maximum exposed memory DPM clock because it is readable without root
+# and tracked the validated 7500/8000 MT/s BIOS states on this Bosgame M5.
+MEM_SPEED="${HALO_MEM_MT_S:-}"
+MEM_SPEED_SOURCE="env"
+if [[ -z "$MEM_SPEED" && -f "$DEV/pp_dpm_mclk" ]]; then
+    max_mclk=$(grep -Eo '[0-9]+Mhz' "$DEV/pp_dpm_mclk" 2>/dev/null | tr -d 'Mhz' | sort -n | tail -n1 || true)
+    if [[ -n "$max_mclk" && "$max_mclk" -gt 0 ]]; then
+        MEM_SPEED=$(( max_mclk * 8 ))
+        MEM_SPEED_SOURCE="pp_dpm_mclk"
+    fi
+fi
+if [[ -z "$MEM_SPEED" ]] && command -v dmidecode >/dev/null 2>&1; then
+    MEM_SPEED=$(dmidecode -t memory 2>/dev/null | grep -m1 "Configured Memory Speed" | awk '{print $4}' || true)
+    [[ -n "$MEM_SPEED" ]] && MEM_SPEED_SOURCE="dmidecode"
+fi
+if [[ -z "$MEM_SPEED" || ! "$MEM_SPEED" =~ ^[0-9]+$ || "$MEM_SPEED" -eq 0 ]]; then
+    MEM_SPEED=8000
+    MEM_SPEED_SOURCE="fallback"
+fi
+PEAK_BW=$(awk -v s="$MEM_SPEED" 'BEGIN { printf "%.1f", (32 * s) / 1000.0 }')
+PEAK_BW_INT=${PEAK_BW%.*}
+
+INIT_THP_MODE="unknown"
+[[ -f /sys/kernel/mm/transparent_hugepage/enabled ]] && INIT_THP_MODE=$(grep -o "\[.*\]" /sys/kernel/mm/transparent_hugepage/enabled | tr -d '[]')
+CONFIG_WARNING=""
+
+BASELINES_FILE="$HOME/.config/halo-top/baselines.json"
+
+# --- State Variables & Telemetry Ring Buffers ---
+HIST_LEN=20
+SPARK_CHARS=(" " "▂" "▃" "▄" "▅" "▆" "▇" "█")
+
+reset_session() {
+    gpu_hist=(); gtt_hist=(); temp_hist=(); power_hist=(); sclk_hist=(); bw_hist=()
+    for ((i=0; i<HIST_LEN; i++)); do
+        gpu_hist+=(0); gtt_hist+=(0); temp_hist+=(0); power_hist+=(0); sclk_hist+=(0); bw_hist+=(0)
+    done
+    
+    peak_gpu=0; peak_sclk=0; peak_mclk=0; peak_bw="0.0"
+    peak_power=0; peak_temp=0; peak_ec_temp=0
+    peak_f1=0; peak_f2=0; peak_f3=0
+    peak_gtt="0.00"; peak_rss="0.00"
+    min_ram_avail=999999; max_psi="0.00"; max_majflt=0
+    
+    bw_window=(); bw_roll_sum=0
+    bweq_window=(); bweq_roll_sum=0
+    
+    bench_samples=0
+    bench_gpu_sum=0; bench_bw_sum=0; bench_power_sum=0
+    bench_start_time=$(date +%s)
+    
+    LAST_MARKER=""
+}
+reset_session
+
+prev_majflt=0; prev_minflt=0; prev_stat_time=0
+prev_self_utime=0; prev_self_stime=0; prev_self_time=0
+
+cleanup() {
+    tput cnorm 2>/dev/null || true
+    echo -e "${C_RESET}"
+    exit 0
+}
+trap cleanup INT TERM
+
+render_spark() {
+    local -n arr=$1
+    local mode=$2
+    local color=$3
+    local out=""
+
+    local min_val=${arr[0]}
+    local max_val=${arr[0]}
+    for v in "${arr[@]}"; do
+        (( v < min_val )) && min_val=$v
+        (( v > max_val )) && max_val=$v
+    done
+
+    local range=$(( max_val - min_val ))
+    [[ $range -le 0 ]] && range=1
+
+    for val in "${arr[@]}"; do
+        local idx=0
+        if [[ "$mode" == "auto" ]]; then
+            idx=$(( ((val - min_val) * 7) / range ))
+        else
+            idx=$(( (val * 7) / (mode > 0 ? mode : 1) ))
+        fi
+        (( idx < 0 )) && idx=0
+        (( idx > 7 )) && idx=7
+
+        if [[ $idx -eq 0 ]]; then
+            out+="${C_DIM}.${C_RESET}${color}"
+        else
+            out+="${SPARK_CHARS[$idx]}"
+        fi
+    done
+    printf "${color}%b${C_RESET}" "$out"
+}
+
+draw_bar() {
+    local pct=$1
+    local width=14
+    local filled=$(( (pct * width) / 100 ))
+    local empty=$(( width - filled ))
+    
+    local color="$C_CYAN"
+    if (( pct >= 95 )); then
+        color="$C_GREEN"
+    elif (( pct >= 80 )); then
+        color="$C_CYAN"
+    fi
+
+    printf "${color}["
+    for ((i=0; i<filled; i++)); do printf "#"; done
+    printf "${C_DIM}"
+    for ((i=0; i<empty; i++)); do printf "-"; done
+    printf "${C_RESET}${color}]${C_RESET}"
+}
+
+if [[ -n "$LOG_FILE" && ! -f "$LOG_FILE" ]]; then
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    echo "timestamp,gpu_activity,gfx_clock,mclk,dram_bw,dram_saturation,package_power,junction_temp,ec_temp,f1_rpm,f2_rpm,f3_rpm,throttle,gtt_used_gib,ram_avail_gib,psi_mem,swap_used_mib,major_faults_s,top_pid,top_comm,top_rss_gib,huge_anon_gib,phase,tokens_sec_est,bottleneck" > "$LOG_FILE"
+fi
+
+SHOW_DETAILS=0
+tput civis 2>/dev/null || true
+clear
+
+# ==============================================================================
+# MAIN SAMPLING AND EXECUTION LOOP
+# ==============================================================================
+while true; do
+    loop_start_ms=$(date +%s%N)
+    now_time=$(date +%s)
+    
+    workload_phase="IDLE"
+    token_rate_str=""
+    delta_str=""
+    bweq_now="0.0"
+    bweq_avg="0.0"
+    gufo_mode=""; gufo_accept=""; gufo_ctx=""
+    base_name=""; base_ts=""
+
+    # 1. Native Low-Overhead Sysfs Memory Reads
+    [[ -f "$DEV/mem_info_gtt_used" ]] && read -r gtt_used < "$DEV/mem_info_gtt_used" || gtt_used=0
+    [[ -f "$DEV/mem_info_gtt_total" ]] && read -r gtt_total < "$DEV/mem_info_gtt_total" || gtt_total=1
+    [[ -f "$DEV/mem_info_vram_used" ]] && read -r vram_used < "$DEV/mem_info_vram_used" || vram_used=0
+    [[ -f "$DEV/mem_info_vram_total" ]] && read -r vram_total < "$DEV/mem_info_vram_total" || vram_total=1
+    [[ -f "$DEV/gpu_busy_percent" ]] && read -r busy < "$DEV/gpu_busy_percent" || busy=0
+
+    # Read Clocks via pp_dpm tables
+    sclk_mhz=0
+    if [[ -f "$DEV/pp_dpm_sclk" ]]; then
+        while read -r p1 p2 p3 rest; do
+            if [[ "$p2" == *"*"* ]] || [[ "$p3" == *"*"* ]] || [[ "${rest:-}" == *"*"* ]]; then
+                raw="${p2%\**}"; raw="${raw//[^0-9]/}"
+                if [[ -n "$raw" && "$raw" -gt 0 ]]; then sclk_mhz=$raw; break; fi
+            fi
+        done < "$DEV/pp_dpm_sclk"
+    fi
+    if (( sclk_mhz == 0 )) && [[ -f "$DEV/current_sclk" ]]; then
+        read -r s_raw < "$DEV/current_sclk" 2>/dev/null || s_raw=0
+        sclk_mhz=$(( s_raw / 1000000 ))
+    fi
+
+    mclk_mhz=0
+    if [[ -f "$DEV/pp_dpm_mclk" ]]; then
+        while read -r p1 p2 p3 rest; do
+            if [[ "$p2" == *"*"* ]] || [[ "$p3" == *"*"* ]] || [[ "${rest:-}" == *"*"* ]]; then
+                raw="${p2%\**}"; raw="${raw//[^0-9]/}"
+                if [[ -n "$raw" && "$raw" -gt 0 ]]; then mclk_mhz=$raw; break; fi
+            fi
+        done < "$DEV/pp_dpm_mclk"
+    fi
+    [[ $mclk_mhz -eq 0 ]] && mclk_mhz=1000
+
+    # Thermals and Power
+    temp_raw=0
+    [[ -f "$TEMP_INPUT" ]] && read -r temp_raw < "$TEMP_INPUT"
+    temp_c=$(( temp_raw / 1000 ))
+
+    power_raw=0
+    [[ -f "$HWMON/power1_average" ]] && read -r power_raw < "$HWMON/power1_average"
+    power_w_int=$(( power_raw / 1000000 ))
+    power_w=$(awk "BEGIN {printf \"%.1f\", $power_raw / 1000000}")
+
+    power_cap_w=0; power_headroom="N/A"
+    if [[ -f "$HWMON/power1_cap" ]]; then
+        read -r p_cap_raw < "$HWMON/power1_cap" 2>/dev/null || p_cap_raw=0
+        if (( p_cap_raw > 0 )); then
+            power_cap_w=$(( p_cap_raw / 1000000 ))
+            power_headroom=$(( power_cap_w - power_w_int ))
+        fi
+    fi
+
+    temp_crit_c=0; temp_headroom="N/A"
+    if [[ -f "$TEMP_CRIT" ]]; then
+        read -r t_crit_raw < "$TEMP_CRIT" 2>/dev/null || t_crit_raw=0
+        if (( t_crit_raw > 0 )); then
+            temp_crit_c=$(( t_crit_raw / 1000 ))
+            temp_headroom=$(( temp_crit_c - temp_c ))
+        fi
+    fi
+
+    # 2. Bosgame M5 Chassis Fans & EC Thermal Telemetry (Zero subprocess forks)
+    ec_temp=0
+    f1_rpm=0; f1_lvl=0
+    f2_rpm=0; f2_lvl=0
+    f3_rpm=0; f3_lvl=0
+
+    if (( HAS_EC == 1 )); then
+        [[ -r "$EC_DIR/temp1/temp" ]] && read -r ec_temp < "$EC_DIR/temp1/temp" 2>/dev/null || ec_temp=0
+        [[ -r "$EC_DIR/fan1/rpm" ]] && read -r f1_rpm < "$EC_DIR/fan1/rpm" 2>/dev/null || f1_rpm=0
+        [[ -r "$EC_DIR/fan1/level" ]] && read -r f1_lvl < "$EC_DIR/fan1/level" 2>/dev/null || f1_lvl=0
+        [[ -r "$EC_DIR/fan2/rpm" ]] && read -r f2_rpm < "$EC_DIR/fan2/rpm" 2>/dev/null || f2_rpm=0
+        [[ -r "$EC_DIR/fan2/level" ]] && read -r f2_lvl < "$EC_DIR/fan2/level" 2>/dev/null || f2_lvl=0
+        [[ -r "$EC_DIR/fan3/rpm" ]] && read -r f3_rpm < "$EC_DIR/fan3/rpm" 2>/dev/null || f3_rpm=0
+        [[ -r "$EC_DIR/fan3/level" ]] && read -r f3_lvl < "$EC_DIR/fan3/level" 2>/dev/null || f3_lvl=0
+
+        (( ec_temp > peak_ec_temp )) && peak_ec_temp=$ec_temp
+        (( f1_rpm > peak_f1 )) && peak_f1=$f1_rpm
+        (( f2_rpm > peak_f2 )) && peak_f2=$f2_rpm
+        (( f3_rpm > peak_f3 )) && peak_f3=$f3_rpm
+    fi
+
+    # 3. Kernel Memory Pressure Information (PSI) & Fault Rates
+    psi_some="0.00"
+    if [[ -f /proc/pressure/memory ]]; then
+        psi_line=$(head -n1 /proc/pressure/memory 2>/dev/null || echo "")
+        psi_some=$(echo "$psi_line" | awk -F'avg10=' '{print $2}' | awk '{print $1}')
+    fi
+
+    cur_majflt=0; cur_minflt=0
+    while read -r key val; do
+        [[ "$key" == "pgmajfault" ]] && cur_majflt=$val
+        [[ "$key" == "pgfault" ]] && cur_minflt=$val
+    done < /proc/vmstat
+
+    maj_rate=0; min_rate=0
+    if (( prev_stat_time > 0 )); then
+        dt=$(( now_time - prev_stat_time ))
+        (( dt <= 0 )) && dt=1
+        maj_rate=$(( (cur_majflt - prev_majflt) / dt ))
+        min_rate=$(( (cur_minflt - prev_minflt) / dt ))
+    fi
+    prev_majflt=$cur_majflt; prev_minflt=$cur_minflt; prev_stat_time=$now_time
+
+    mem_avail_kb=0; swap_total_kb=0; swap_free_kb=0
+    while read -r k v unit; do
+        case "$k" in
+            MemAvailable:) mem_avail_kb=$v ;;
+            SwapTotal:) swap_total_kb=$v ;;
+            SwapFree:) swap_free_kb=$v ;;
+        esac
+    done < /proc/meminfo
+    swap_used_mb=$(( (swap_total_kb - swap_free_kb) / 1024 ))
+    swap_total_gb=$(awk -v t="$swap_total_kb" 'BEGIN {printf "%.1f", t/1048576}')
+    mem_avail_gb=$(awk -v a="$mem_avail_kb" 'BEGIN {printf "%.1f", a/1048576}')
+
+    thp_mode="unknown"
+    if [[ -f /sys/kernel/mm/transparent_hugepage/enabled ]]; then
+        thp_mode=$(grep -o "\[.*\]" /sys/kernel/mm/transparent_hugepage/enabled | tr -d '[]')
+    fi
+
+    CONFIG_WARNING=""
+    if [[ "$thp_mode" != "$INIT_THP_MODE" ]]; then
+        CONFIG_WARNING="THP ALTERED (${INIT_THP_MODE}->${thp_mode})"
+    elif (( swap_used_mb > 50 )); then
+        CONFIG_WARNING="SWAP ACTIVATED (${swap_used_mb} MiB)"
+    fi
+
+    # 4. Tab-Delimited Telemetry Stream Engine
+    telemetry_blob=$(
+        python3 -S -c '
+import os, sys, glob, struct, json
+
+dev_path = sys.argv[1]
+base_file = sys.argv[2]
+
+mclk = 0
+fclk = 0
+sdma = 0
+vcn = 0
+throttle = "NONE"
+
+gm_path = os.path.join(dev_path, "gpu_metrics")
+if os.path.exists(gm_path):
+    try:
+        with open(gm_path, "rb") as f:
+            raw = f.read()
+        if len(raw) >= 48:
+            s_size, f_rev, c_rev = struct.unpack_from("<HBB", raw, 0)
+            if f_rev in (2, 3):
+                vcn = struct.unpack_from("<H", raw, 30)[0]
+                mclk = struct.unpack_from("<H", raw, 40)[0]
+                fclk = struct.unpack_from("<H", raw, 42)[0]
+                if len(raw) >= 64:
+                    th_stat = struct.unpack_from("<I", raw, 60)[0]
+                    reasons = []
+                    if th_stat & 0x01: reasons.append("THERMAL")
+                    if th_stat & 0x02: reasons.append("POWER")
+                    if th_stat & 0x04: reasons.append("CURRENT")
+                    if th_stat & 0x10: reasons.append("VRM")
+                    if reasons: throttle = "|".join(reasons)
+    except Exception:
+        pass
+
+print(f"TELEMETRY\t{mclk}\t{fclk}\t{sdma}\t{vcn}\t{throttle}")
+
+pids = {}
+IGNORE_COMMS = {"systemd", "systemd-logind", "init", "dbus-daemon"}
+
+for pdir in glob.glob("/sys/devices/virtual/kfd/kfd/proc/*"):
+    p_str = os.path.basename(pdir)
+    if not p_str.isdigit():
+        continue
+    pid = int(p_str)
+    try:
+        with open(f"/proc/{pid}/comm", "r") as f:
+            if f.read().strip() in IGNORE_COMMS:
+                continue
+    except Exception:
+        continue
+
+    total_bytes = 0
+    for sf in glob.glob(f"{pdir}/alloc_*/size"):
+        try:
+            with open(sf, "r") as f:
+                total_bytes += int(f.read().strip())
+        except Exception:
+            pass
+    if total_bytes == 0:
+        try:
+            with open(f"/proc/{pid}/statm", "r") as f:
+                total_bytes = int(f.read().split()[1]) * 4096
+        except Exception:
+            pass
+    if total_bytes > 0:
+        pids[pid] = [total_bytes, "ROCm/HIP", -1]
+
+for fd_path in glob.glob("/proc/[0-9]*/fdinfo/*"):
+    try:
+        parts = fd_path.split("/")
+        pid = int(parts[2])
+        if pid in pids:
+            continue
+        try:
+            with open(f"/proc/{pid}/comm", "r") as f:
+                if f.read().strip() in IGNORE_COMMS:
+                    continue
+        except Exception:
+            continue
+
+        with open(fd_path, "r") as f:
+            lines = f.readlines()
+        if not any("drm-driver:\tamdgpu" in l or "drm-driver: amdgpu" in l for l in lines):
+            continue
+
+        gtt = sum(int(l.split()[1]) * (1024 if "KiB" in l else 1) for l in lines if "drm-memory-gtt:" in l)
+        vram = sum(int(l.split()[1]) * (1024 if "KiB" in l else 1) for l in lines if "drm-memory-vram:" in l)
+        if (gtt + vram) > 0:
+            pids[pid] = [gtt + vram, "DRM/Mesa", gtt]
+    except Exception:
+        continue
+
+sorted_pids = sorted(pids.items(), key=lambda x: x[1][0], reverse=True)[:5]
+
+cpu_map = {}
+if sorted_pids:
+    pid_list = ",".join(str(p[0]) for p in sorted_pids)
+    try:
+        with os.popen(f"ps -p {pid_list} -o pid=,%cpu= 2>/dev/null") as ps_f:
+            for l in ps_f:
+                p = l.strip().split()
+                if len(p) >= 2:
+                    cpu_map[int(p[0])] = p[1]
+    except Exception:
+        pass
+
+top_pid = 0
+top_comm = "none"
+huge_anon = 0
+top_rss = 0
+top_gtt = 0
+
+for pid, (mem, backend, gtt_mem) in sorted_pids:
+    if backend == "ROCm/HIP":
+        top_pid = pid
+        top_gtt = gtt_mem
+        try:
+            with open(f"/proc/{pid}/comm", "r") as f:
+                top_comm = f.read().strip()
+            with open(f"/proc/{pid}/statm", "r") as f:
+                top_rss = int(f.read().split()[1]) * 4096
+            rollup_path = f"/proc/{pid}/smaps_rollup"
+            if os.path.exists(rollup_path):
+                with open(rollup_path, "r") as f:
+                    for l in f:
+                        if l.startswith("AnonHugePages:"):
+                            huge_anon = int(l.split()[1]) * 1024
+        except Exception:
+            pass
+        break
+
+print(f"TOP_ROC\t{top_pid}\t{top_comm}\t{huge_anon}\t{top_rss}\t{top_gtt}")
+
+for pid, (mem, backend, gtt_mem) in sorted_pids:
+    comm = "exited"
+    rss = mem
+    try:
+        with open(f"/proc/{pid}/comm", "r") as f:
+            comm = f.read().strip()
+        with open(f"/proc/{pid}/statm", "r") as f:
+            rss = int(f.read().split()[1]) * 4096
+    except Exception:
+        pass
+    cpu = cpu_map.get(pid, "0.0")
+    print(f"PROC\t{pid}\t{comm}\t{rss}\t{gtt_mem}\t{backend}\t{cpu}")
+
+for gpath in ("/tmp/gufo-telemetry.json", "/dev/shm/gufo-telemetry.json"):
+    if os.path.exists(gpath):
+        try:
+            with open(gpath, "r") as f:
+                gdata = json.load(f)
+                g_mode = gdata.get("mode", "none")
+                g_acc = gdata.get("acceptance_rate", 0.0)
+                g_ctx = gdata.get("context_depth", "N/A")
+                print(f"GUFO\t{g_mode}\t{g_acc}\t{g_ctx}")
+                break
+        except Exception:
+            pass
+
+if os.path.exists(base_file):
+    try:
+        with open(base_file, "r") as f:
+            b_all = json.load(f)
+            for k, v in b_all.items():
+                if k.lower() in top_comm.lower() or "default" in k.lower():
+                    b_ts = v.get("tokens_per_second", 0)
+                    print(f"BASELINE\t{k}\t{b_ts}")
+                    break
+    except Exception:
+        pass
+' "$DEV" "$BASELINES_FILE" 2>/dev/null
+    )
+
+    # 5. Stream Parsing in Pure Bash
+    proc_lines=()
+    gm_mclk=0; gm_fclk=0; gm_sdma=0; gm_vcn=0; throttle_flag="NONE"
+    top_pid=0; top_comm="none"; top_rss_b=0; top_gtt_b=0; huge_anon_b=0
+
+    while IFS=$'\t' read -r tag p1 p2 p3 p4 p5 p6; do
+        [[ -z "$tag" ]] && continue
+        case "$tag" in
+            TELEMETRY)
+                gm_mclk=$p1; gm_fclk=$p2; gm_sdma=$p3; gm_vcn=$p4; throttle_flag=$p5
+                ;;
+            TOP_ROC)
+                top_pid=$p1; top_comm=$p2; huge_anon_b=$p3; top_rss_b=$p4; top_gtt_b=$p5
+                ;;
+            GUFO)
+                gufo_mode=$p1; gufo_accept=$p2; gufo_ctx=$p3
+                ;;
+            BASELINE)
+                base_name=$p1; base_ts=$p2
+                ;;
+            PROC)
+                proc_lines+=("$p1"$'\t'"$p2"$'\t'"$p3"$'\t'"$p4"$'\t'"$p5"$'\t'"$p6")
+                ;;
+        esac
+    done <<< "$telemetry_blob"
+
+    [[ -n "$gm_mclk" && "$gm_mclk" -gt 0 ]] && mclk_mhz=$gm_mclk
+
+    # 6. DRAM Bandwidth Processing & Rolling Window
+    bw_now_gb=$(awk -v b="$busy" -v p="$PEAK_BW" 'BEGIN { printf "%.1f", (p * (b / 100.0)) }')
+    bw_int=${bw_now_gb%.*}
+
+    bw_window+=("$bw_now_gb")
+    bw_roll_sum=$(awk -v s="$bw_roll_sum" -v n="$bw_now_gb" 'BEGIN { printf "%.1f", s + n }')
+    if (( ${#bw_window[@]} > 8 )); then
+        old_val=${bw_window[0]}
+        bw_window=("${bw_window[@]:1}")
+        bw_roll_sum=$(awk -v s="$bw_roll_sum" -v o="$old_val" 'BEGIN { printf "%.1f", s - o }')
+    fi
+    bw_avg_gb=$(awk -v s="$bw_roll_sum" -v c="${#bw_window[@]}" 'BEGIN { printf "%.1f", s / (c > 0 ? c : 1) }')
+
+    awk -v b="$bw_now_gb" -v p="$peak_bw" 'BEGIN { exit !(b > p) }' && peak_bw=$bw_now_gb
+    (( busy > peak_gpu )) && peak_gpu=$busy
+    (( sclk_mhz > peak_sclk )) && peak_sclk=$sclk_mhz
+    (( mclk_mhz > peak_mclk )) && peak_mclk=$mclk_mhz
+    (( power_w_int > peak_power )) && peak_power=$power_w_int
+    (( temp_c > peak_temp )) && peak_temp=$temp_c
+    (( maj_rate > max_majflt )) && max_majflt=$maj_rate
+
+    cur_gtt_gb=$(awk "BEGIN {printf \"%.2f\", $gtt_used / 1073741824}")
+    awk -v g="$cur_gtt_gb" -v p="$peak_gtt" 'BEGIN { exit !(g > p) }' && peak_gtt=$cur_gtt_gb
+
+    cur_rss_gb=$(awk "BEGIN {printf \"%.2f\", $top_rss_b / 1073741824}")
+    awk -v r="$cur_rss_gb" -v p="$peak_rss" 'BEGIN { exit !(r > p) }' && peak_rss=$cur_rss_gb
+
+    mem_avail_mb=$(( mem_avail_kb / 1024 ))
+    (( mem_avail_mb < min_ram_avail )) && min_ram_avail=$mem_avail_mb
+    awk -v p="$psi_some" -v m="$max_psi" 'BEGIN { exit !(p > m) }' && max_psi=$psi_some
+
+    bw_pct_now=$(awk -v n="$bw_now_gb" -v p="$PEAK_BW" 'BEGIN { printf "%.1f", (n * 100.0) / p }')
+    bw_pct_avg=$(awk -v a="$bw_avg_gb" -v p="$PEAK_BW" 'BEGIN { printf "%.1f", (a * 100.0) / p }')
+    bw_pct_peak=$(awk -v k="$peak_bw" -v p="$PEAK_BW" 'BEGIN { printf "%.1f", (k * 100.0) / p }')
+
+    gpu_hist=("${gpu_hist[@]:1}" "$busy")
+    gtt_hist=("${gtt_hist[@]:1}" "$(( gtt_used / 1048576 ))")
+    temp_hist=("${temp_hist[@]:1}" "$temp_c")
+    power_hist=("${power_hist[@]:1}" "$power_w_int")
+    sclk_hist=("${sclk_hist[@]:1}" "$sclk_mhz")
+    bw_hist=("${bw_hist[@]:1}" "$bw_int")
+
+    gtt_pct=$(( (gtt_used * 100) / (gtt_total > 0 ? gtt_total : 1) ))
+    vram_pct=$(( (vram_used * 100) / (vram_total > 0 ? vram_total : 1) ))
+    gtt_u_gb=$cur_gtt_gb
+    gtt_t_gb=$(awk "BEGIN {printf \"%.2f\", $gtt_total / 1073741824}")
+    gtt_free_gb=$(awk "BEGIN {printf \"%.2f\", ($gtt_total - $gtt_used) / 1073741824}")
+    vram_u_mb=$(awk "BEGIN {printf \"%.0f\", $vram_used / 1048576}")
+    vram_t_mb=$(awk "BEGIN {printf \"%.0f\", $vram_total / 1048576}")
+    huge_anon_gb=$(awk "BEGIN {printf \"%.2f\", $huge_anon_b / 1073741824}")
+    top_rss_gb=$cur_rss_gb
+
+    thp_cov_pct="0.0"
+    if (( top_rss_b > 0 )); then
+        thp_cov_pct=$(awk -v h="$huge_anon_b" -v r="$top_rss_b" 'BEGIN { printf "%.1f", (h * 100.0) / r }')
+    fi
+
+    # 7. Risk & Operational Health Evaluation (Factoring EC Thermals & Fans)
+    r_therm="LOW"; c_r_therm="$C_GREEN"
+    if [[ "$throttle_flag" =~ "THERMAL" ]] || (( temp_c >= 85 )) || (( ec_temp >= 85 )); then
+        r_therm="HIGH"; c_r_therm="$C_RED"
+    elif (( temp_c >= 75 )) || (( ec_temp >= 77 && (f1_lvl >= 5 || f2_lvl >= 5) )); then
+        r_therm="MED"; c_r_therm="$C_YELLOW"
+    fi
+
+    r_power="LOW"; c_r_power="$C_GREEN"
+    if [[ "$throttle_flag" =~ "POWER" ]] || (( power_cap_w > 0 && power_w_int >= power_cap_w - 2 )); then
+        r_power="HIGH"; c_r_power="$C_RED"
+    elif (( power_w_int >= 80 )); then
+        r_power="MED"; c_r_power="$C_YELLOW"
+    fi
+
+    r_mem="LOW"; c_r_mem="$C_GREEN"
+    if awk -v p="$psi_some" 'BEGIN { exit !(p > 2.0) }' || (( maj_rate > 50 )); then
+        r_mem="HIGH"; c_r_mem="$C_RED"
+    elif awk -v p="$psi_some" 'BEGIN { exit !(p > 0.5) }' || (( maj_rate > 5 )); then
+        r_mem="MED"; c_r_mem="$C_YELLOW"
+    fi
+
+    r_swap="LOW"; c_r_swap="$C_GREEN"
+    if (( swap_used_mb > 200 )); then
+        r_swap="HIGH"; c_r_swap="$C_RED"
+    elif (( swap_used_mb > 0 )); then
+        r_swap="MED"; c_r_swap="$C_YELLOW"
+    fi
+
+    r_gtt="LOW"; c_r_gtt="$C_GREEN"
+    if (( gtt_pct >= 90 )); then
+        r_gtt="HIGH"; c_r_gtt="$C_RED"
+    elif (( gtt_pct >= 75 )); then
+        r_gtt="MED"; c_r_gtt="$C_YELLOW"
+    fi
+
+    # 8. Bottleneck Inference Engine
+    b_cause="UNKNOWN"
+    b_conf="LOW"
+    b_metric=0
+    b_color="$C_DIM"
+
+    if [[ "$r_mem" == "HIGH" || "$r_swap" == "HIGH" ]]; then
+        b_cause="MEMORY PRESSURE"; b_conf="HIGH"; b_metric=100; b_color="$C_RED"
+    elif [[ "$r_power" == "HIGH" ]]; then
+        b_cause="POWER"; b_conf="HIGH"; b_metric=100; b_color="$C_YELLOW"
+    elif [[ "$r_therm" == "HIGH" ]]; then
+        b_cause="THERMAL"; b_conf="HIGH"; b_metric=100; b_color="$C_RED"
+    elif awk -v b="$bw_pct_now" 'BEGIN { exit !(b >= 88.0) }' && (( busy >= 85 )); then
+        b_cause="MEMORY"
+        if awk -v b="$bw_pct_now" 'BEGIN { exit !(b >= 94.0) }'; then b_conf="HIGH"; else b_conf="MED"; fi
+        b_metric=${bw_pct_now%.*}; b_color="$C_CYAN"
+    elif (( busy >= 92 )) && awk -v b="$bw_pct_now" 'BEGIN { exit !(b < 75.0) }'; then
+        b_cause="COMPUTE"; b_conf="HIGH"; b_metric=$busy; b_color="$C_GREEN"
+    elif (( busy < 15 )); then
+        b_cause="IDLE"; b_conf="HIGH"; b_metric=0; b_color="$C_DIM"
+    fi
+
+    # 9. Workload & Phase Detection
+    if [[ "$top_comm" != "none" && $top_rss_b -gt 1073741824 ]]; then
+        if [[ -n "$gufo_mode" ]]; then
+            workload_phase="SPECULATIVE DECODE ($gufo_mode)"
+        elif awk -v b="$bw_pct_now" 'BEGIN { exit !(b >= 85.0) }'; then
+            workload_phase="DECODE/STREAM"
+        elif (( busy >= 85 )); then
+            if awk "BEGIN { exit !($gtt_used > 25000000000) }"; then
+                workload_phase="LONG-CTX PREFILL"
+            else
+                workload_phase="PREFILL/GEMM"
+            fi
+        else
+            workload_phase="ROCm ACTIVE"
+        fi
+
+        ts_est=$(awk -v bw="$bw_now_gb" -v m="$top_rss_b" 'BEGIN { printf "%.1f", bw / (m / 1073741824.0) }')
+        token_rate_str=" [est. ~${ts_est} t/s, med conf]"
+
+        bweq_now=$(awk -v bw="$bw_now_gb" -v ts="$ts_est" 'BEGIN { if (ts > 0) printf "%.1f", bw / ts; else print "0.0" }')
+        bweq_window+=("$bweq_now")
+        bweq_roll_sum=$(awk -v s="$bweq_roll_sum" -v n="$bweq_now" 'BEGIN { printf "%.1f", s + n }')
+        if (( ${#bweq_window[@]} > 8 )); then
+            old_bweq=${bweq_window[0]}
+            bweq_window=("${bweq_window[@]:1}")
+            bweq_roll_sum=$(awk -v s="$bweq_roll_sum" -v o="$old_bweq" 'BEGIN { printf "%.1f", s - o }')
+        fi
+        bweq_avg=$(awk -v s="$bweq_roll_sum" -v c="${#bweq_window[@]}" 'BEGIN { printf "%.1f", s / (c > 0 ? c : 1) }')
+
+        if [[ -n "$base_ts" ]]; then
+            delta_pct=$(awk -v cur="$ts_est" -v b="$base_ts" 'BEGIN { printf "%+.1f", ((cur - b) * 100.0) / b }')
+            delta_str="${delta_pct}% vs ${base_name}"
+        fi
+    fi
+
+    # 10. Self-Telemetry Tracking for halo-top
+    self_stat=$(cat /proc/$$/stat 2>/dev/null || echo "")
+    self_utime=$(echo "$self_stat" | awk '{print $14}')
+    self_stime=$(echo "$self_stat" | awk '{print $15}')
+    self_rss_pages=$(awk '{print $2}' /proc/$$/statm 2>/dev/null || echo 0)
+    self_rss_mib=$(awk -v p="$self_rss_pages" 'BEGIN { printf "%.1f", (p * 4096) / 1048576 }')
+
+    self_cpu_pct="0.0"
+    if (( prev_self_time > 0 )); then
+        dt_self=$(( now_time - prev_self_time ))
+        (( dt_self <= 0 )) && dt_self=1
+        d_ticks=$(( (self_utime + self_stime) - (prev_self_utime + prev_self_stime) ))
+        clk_tck=$(getconf CLK_TCK 2>/dev/null || echo 100)
+        self_cpu_pct=$(awk -v dt="$d_ticks" -v clk="$clk_tck" -v s="$dt_self" 'BEGIN { printf "%.2f", (dt / clk) * 100.0 / s }')
+    fi
+    prev_self_utime=$self_utime; prev_self_stime=$self_stime; prev_self_time=$now_time
+
+    # 11. Optional Logging
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "${now_time},${busy},${sclk_mhz},${mclk_mhz},${bw_now_gb},${bw_pct_now},${power_w},${temp_c},${ec_temp},${f1_rpm},${f2_rpm},${f3_rpm},${throttle_flag},${gtt_u_gb},${mem_avail_gb},${psi_some},${swap_used_mb},${maj_rate},${top_pid},${top_comm},${top_rss_gb},${huge_anon_gb},${workload_phase},${ts_est:-0},${b_cause}" >> "$LOG_FILE"
+    fi
+
+    if [[ -n "$JSONL_FILE" ]]; then
+        cat << JSONL_RECORD >> "$JSONL_FILE"
+{"timestamp":$now_time,"gpu_activity":$busy,"gfx_clock":$sclk_mhz,"mclk":$mclk_mhz,"dram_bw":$bw_now_gb,"dram_sat":$bw_pct_now,"power_w":$power_w,"temp_c":$temp_c,"ec_temp_c":$ec_temp,"fans":{"f1_rpm":$f1_rpm,"f2_rpm":$f2_rpm,"f3_rpm":$f3_rpm},"throttle":"$throttle_flag","gtt_used_gib":$gtt_u_gb,"ram_avail_gib":$mem_avail_gb,"psi_mem":$psi_some,"swap_used_mib":$swap_used_mb,"major_faults_s":$maj_rate,"worker":{"pid":$top_pid,"comm":"$top_comm","rss_gib":$top_rss_gb,"huge_anon_gib":$huge_anon_gb},"phase":"$workload_phase","token_rate_est":"${ts_est:-0}","bottleneck":"$b_cause","confidence":"$b_conf"}
+JSONL_RECORD
+    fi
+
+    # Benchmark Accumulator Updates
+    if (( BENCHMARK_MODE == 1 )); then
+        (( bench_samples++ ))
+        bench_gpu_sum=$(( bench_gpu_sum + busy ))
+        bench_bw_sum=$(awk -v s="$bench_bw_sum" -v b="$bw_now_gb" 'BEGIN { printf "%.1f", s + b }')
+        bench_power_sum=$(awk -v s="$bench_power_sum" -v p="$power_w" 'BEGIN { printf "%.1f", s + p }')
+
+        if (( BENCHMARK_DURATION > 0 && (now_time - bench_start_time) >= BENCHMARK_DURATION )); then
+            clear
+            echo -e "${C_BOLD}${C_WHITE}==================== HALO-TOP BENCHMARK SUMMARY ====================${C_RESET}"
+            printf " Duration        : %d s (%d samples)\n" "$(( now_time - bench_start_time ))" "$bench_samples"
+            printf " GPU Load (avg)  : %.1f %%\n" "$(awk -v s="$bench_gpu_sum" -v c="$bench_samples" 'BEGIN { printf "%.1f", s/c }')"
+            printf " DRAM BW (avg)   : %.1f GB/s\n" "$(awk -v s="$bench_bw_sum" -v c="$bench_samples" 'BEGIN { printf "%.1f", s/c }')"
+            printf " DRAM BW (peak)  : %s GB/s\n" "$peak_bw"
+            printf " SoC Power (avg) : %.1f W\n" "$(awk -v s="$bench_power_sum" -v c="$bench_samples" 'BEGIN { printf "%.1f", s/c }')"
+            printf " SoC Power (peak): %d W\n" "$peak_power"
+            printf " Junction (peak) : %d °C\n" "$peak_temp"
+            printf " EC Temp (peak)  : %d °C\n" "$peak_ec_temp"
+            printf " Fans (peak RPM) : Fan1: %d | Fan2: %d | Fan3: %d\n" "$peak_f1" "$peak_f2" "$peak_f3"
+            printf " GTT Pool (peak) : %s GiB\n" "$peak_gtt"
+            printf " Swap Peak       : %d MiB\n" "$swap_used_mb"
+            printf " PSI Mem (max)   : %s %%\n" "$max_psi"
+            printf " MajFault (max)  : %d /s\n" "$max_majflt"
+            printf " Primary Stoppage: %s\n" "$b_cause"
+            echo -e "${C_BOLD}${C_WHITE}====================================================================${C_RESET}"
+            cleanup
+        fi
+    fi
+
+    # ==========================================================================
+    # DISPLAY RENDERING
+    # ==========================================================================
+    tput cup 0 0
+
+    if (( SHOW_DETAILS == 1 )); then
+        # DIAGNOSTIC & PROVENANCE VIEW ([d])
+        echo -e "${C_BOLD}${C_WHITE}====================== AMD STRIX HALO DIAGNOSTICS ======================${C_RESET}\033[K"
+        echo -e " CPU: ${CPU_MODEL} | Arch: gfx1151 (RDNA 3.5)\033[K"
+        echo -e " Platform: Bosgame M5 (AXB35-02) | Kernel: ${KERNEL_VER} | PCI: ${PCI_ID}\033[K"
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+        
+        echo -e " ${C_BOLD}SESSION EXTREMES (Reset via [r])${C_RESET}\033[K"
+        printf "   GFX Peak      : %4d MHz     | DRAM BW Peak  : %5s GB/s\033[K\n" "$peak_sclk" "$peak_bw"
+        printf "   SoC Pwr Peak  : %4d W       | Junction Peak :   %3d °C\033[K\n" "$peak_power" "$peak_temp"
+        printf "   EC Temp Peak  :   %3d °C     | Fans Peak RPM : %d / %d / %d\033[K\n" "$peak_ec_temp" "$peak_f1" "$peak_f2" "$peak_f3"
+        printf "   GTT Max Alloc : %5s GiB    | Top RSS Peak  : %5s GiB\033[K\n" "$peak_gtt" "$peak_rss"
+        printf "   Min RAM Avail : %5d MiB    | Max Mem PSI   : %5s %%\033[K\n" "$min_ram_avail" "$max_psi"
+
+        echo -e "\033[K"
+        echo -e " ${C_BOLD}CHASSIS THERMAL ZONES & FANS (/sys/class/ec_su_axb35)${C_RESET}\033[K"
+        if (( HAS_EC == 1 )); then
+            printf "   Motherboard EC Temp : %3d °C\033[K\n" "$ec_temp"
+            printf "   Fan 1 (channel 1)   : %4d RPM  [Level %s / Auto]\033[K\n" "$f1_rpm" "$f1_lvl"
+            printf "   Fan 2 (channel 2)   : %4d RPM  [Level %s / Auto]\033[K\n" "$f2_rpm" "$f2_lvl"
+            printf "   Fan 3 (channel 3)   : %4d RPM  [Level %s / Auto]\033[K\n" "$f3_rpm" "$f3_lvl"
+        else
+            echo -e "   EC Driver /sys/class/ec_su_axb35 not detected.\033[K"
+        fi
+
+        echo -e "\033[K"
+        echo -e " ${C_BOLD}MONITOR SELF-TELEMETRY${C_RESET}\033[K"
+        loop_end_ms=$(date +%s%N)
+        exec_latency_ms=$(awk -v s="$loop_start_ms" -v e="$loop_end_ms" 'BEGIN { printf "%.1f", (e - s)/1000000.0 }')
+        printf "   halo-top CPU  : %5s %% (1 core) | halo-top RSS  : %s MiB\033[K\n" "$self_cpu_pct" "$self_rss_mib"
+        printf "   Loop Latency  : %5s ms          | Sample Rate   : %d s\033[K\n" "$exec_latency_ms" "$REFRESH_SEC"
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+        echo -e " ${C_DIM}[d] Return to Main View  [q] Quit\033[K${C_RESET}"
+        printf "\033[J"
+    else
+        # MAIN MONITOR VIEW
+        config_warn_disp=""
+        [[ -n "$CONFIG_WARNING" ]] && config_warn_disp=" | ${C_RED}${C_BOLD}${CONFIG_WARNING}${C_RESET}"
+        
+        echo -e "${C_BOLD}${C_WHITE}====================== AMD STRIX HALO WORKSTATION ======================${C_RESET}\033[K"
+        echo -e " Radeon 8060S | gfx1151 | LPDDR5X-${MEM_SPEED} (${MEM_SPEED_SOURCE}) | THP:${thp_mode} | MCLK:${mclk_mhz}${config_warn_disp}\033[K"
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+
+        # Hardware Gauges
+        printf " ${C_BOLD}%-14s${C_RESET} %3d %%      " "GPU Activity" "$busy"
+        draw_bar "$busy"
+        printf " | Hist: "
+        render_spark gpu_hist 100 "$C_CYAN"
+        echo -e "\033[K"
+
+        printf " ${C_BOLD}%-14s${C_RESET} %4d MHz   " "GFX Clock" "$sclk_mhz"
+        draw_bar "$(( (sclk_mhz * 100) / 2900 ))"
+        printf " | Hist: "
+        render_spark sclk_hist "auto" "$C_CYAN"
+        echo -e "\033[K"
+
+        printf " ${C_BOLD}%-14s${C_RESET} %5.1f GB/s " "DRAM BW est." "$bw_now_gb"
+        draw_bar "$(( (bw_int * 100) / PEAK_BW_INT ))"
+        printf " | Hist: "
+        render_spark bw_hist "$PEAK_BW_INT" "$C_BLUE"
+        echo -e "\033[K"
+
+        printf "   ${C_DIM}DRAM BW Rate : %5.1f / %5.1f / %5.1f GB/s (AVG/NOW/PEAK)${C_RESET}\033[K\n" \
+            "$bw_avg_gb" "$bw_now_gb" "$peak_bw"
+        printf "   ${C_DIM}DRAM Saturation : %5.1f%% / %5.1f%% / %5.1f%% of %s GB/s${C_RESET}\033[K\n" \
+            "$bw_pct_avg" "$bw_pct_now" "$bw_pct_peak" "$PEAK_BW"
+
+        printf " ${C_BOLD}%-14s${C_RESET} %5.1f W    " "Package Power" "$power_w"
+        draw_bar "$(( (power_w_int * 100) / 120 ))"
+        printf " | Hist: "
+        render_spark power_hist 120 "$C_MAGENTA"
+        echo -e "\033[K"
+
+        c_temp="$C_GREEN"
+        (( temp_c >= 75 )) && c_temp="$C_YELLOW"
+        (( temp_c >= 85 )) && c_temp="$C_RED"
+        printf " ${C_BOLD}%-14s${C_RESET} ${c_temp}%3d °C${C_RESET}     " "Junction Temp" "$temp_c"
+        draw_bar "$(( (temp_c * 100) / 105 ))"
+        printf " | Hist: "
+        render_spark temp_hist 105 "$C_YELLOW"
+        echo -e "\033[K"
+
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+
+        # Platform Limits, Headroom & Chassis Thermals
+        echo -e " ${C_BOLD}LIMITS & HEADROOM${C_RESET}\033[K"
+        if (( power_cap_w > 0 )); then
+            printf "   SoC Power     : %5.1f W / %3d W   (Headroom: %3d W)\033[K\n" "$power_w" "$power_cap_w" "$power_headroom"
+        else
+            printf "   SoC Power     : %5.1f W           (Platform cap unexposed)\033[K\n" "$power_w"
+        fi
+
+        if (( temp_crit_c > 0 )); then
+            printf "   Junction Temp :   %3d °C / %3d °C   (Headroom: +%2d °C)\033[K\n" "$temp_c" "$temp_crit_c" "$temp_headroom"
+        else
+            if (( ec_temp > 0 )); then
+                printf "   Junction Temp :   %3d °C           (EC Board: %2d °C)\033[K\n" "$temp_c" "$ec_temp"
+            else
+                printf "   Junction Temp :   %3d °C           (Trip point unexposed)\033[K\n" "$temp_c"
+            fi
+        fi
+
+        if (( HAS_EC == 1 && (f1_rpm > 0 || f2_rpm > 0) )); then
+            printf "   Chassis Fans  : %4d / %4d / %4d RPM  [L%s/L%s/L%s (fan1/fan2/fan3)]\033[K\n" \
+                "$f1_rpm" "$f2_rpm" "$f3_rpm" "$f1_lvl" "$f2_lvl" "$f3_lvl"
+        fi
+        printf "   SMU Throttle  : ${C_BOLD}%s${C_RESET}\033[K\n" "$throttle_flag"
+
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+
+        # Unified System Memory & Pressure
+        printf " ${C_BOLD}%-14s${C_RESET} : %6.2f / %6.2f GiB (%2d%%)  ${C_DIM}[Unified GTT Pool]${C_RESET}\033[K\n" \
+            "GPU GTT" "$gtt_u_gb" "$gtt_t_gb" "$gtt_pct"
+        printf " ${C_BOLD}%-14s${C_RESET} : %6d / %6d MiB (%2d%%)  ${C_DIM}[Firmware Carveout]${C_RESET}\033[K\n" \
+            "UMA Carveout" "$vram_u_mb" "$vram_t_mb" "$vram_pct"
+        printf " ${C_BOLD}%-14s${C_RESET} : %6.1f GiB         ${C_DIM}| PSI Mem : %s%%${C_RESET}\033[K\n" \
+            "RAM Available" "$mem_avail_gb" "$psi_some"
+        printf " ${C_BOLD}%-14s${C_RESET} : %6d MiB / %4.1f GiB  ${C_DIM}| MajFault: %d/s${C_RESET}\033[K\n" \
+            "zRAM Swap" "$swap_used_mb" "$swap_total_gb" "$maj_rate"
+
+        if [[ "$top_comm" != "none" && $top_rss_b -gt 0 ]]; then
+            printf " ${C_BOLD}%-14s${C_RESET} : %6.2f / %6.2f GiB (%s%% of RSS) ${C_DIM}(%s)${C_RESET}\033[K\n" \
+                "THP HugeAnon" "$huge_anon_gb" "$top_rss_gb" "$thp_cov_pct" "$top_comm"
+        fi
+
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+
+        # Workload & Bottleneck Diagnostics
+        echo -e " ${C_BOLD}WORKLOAD & BOTTLENECK INFERENCE${C_RESET}\033[K"
+        printf "   Phase         : ${C_BOLD}%s${C_RESET}%s\033[K\n" "$workload_phase" "$token_rate_str"
+        if [[ -n "$delta_str" ]]; then
+            printf "   Delta vs Base : ${C_GREEN}%s${C_RESET}\033[K\n" "$delta_str"
+        fi
+        if [[ -n "$token_rate_str" ]]; then
+            printf "   BW-eq/token   : %s / %s GB/token (NOW/AVG)\033[K\n" "$bweq_now" "$bweq_avg"
+        fi
+        if [[ -n "$gufo_accept" ]]; then
+            printf "   Gufo SpecStat : Acceptance %s%% | Context: %s\033[K\n" "$gufo_accept" "${gufo_ctx:-N/A}"
+        fi
+        printf "   Bottleneck    : ${b_color}${C_BOLD}%-15s${C_RESET} " "$b_cause"
+        draw_bar "$b_metric"
+        printf "  %3d%% (${b_conf} conf)\033[K\n" "$b_metric"
+
+        echo -e "\033[K"
+        echo -e " ${C_BOLD}HEALTH & OPERATIONAL RISK${C_RESET}\033[K"
+        printf "   Thermal: ${c_r_therm}%-4s${C_RESET} | Power: ${c_r_power}%-4s${C_RESET} | Memory: ${c_r_mem}%-4s${C_RESET} | Swap: ${c_r_swap}%-4s${C_RESET} | GTT: ${c_r_gtt}%-4s${C_RESET}\033[K\n" \
+            "$r_therm" "$r_power" "$r_mem" "$r_swap" "$r_gtt"
+
+        echo -e "${C_DIM}------------------------------------------------------------------------${C_RESET}\033[K"
+
+        # Accelerator Processes Table
+        echo -e " ${C_BOLD}${C_WHITE}TOP ACCELERATOR PROCESSES${C_RESET}\033[K"
+        printf " ${C_DIM}%-7s %-16s %-12s %-10s %-10s %s${C_RESET}\033[K\n" "PID" "COMMAND" "MEM/RSS" "GTT" "BACKEND" "CPU%"
+
+        if (( ${#proc_lines[@]} == 0 )); then
+            printf " ${C_DIM}No active compute or graphics processes identified.${C_RESET}\033[K\n"
+        else
+            for proc_entry in "${proc_lines[@]}"; do
+                IFS=$'\t' read -r p_pid p_cmd p_rss_b p_gtt_b p_back p_cpu <<< "$proc_entry"
+
+                mem_h=$(awk "BEGIN {
+                    if ($p_rss_b >= 1073741824) printf \"%.2f GiB\", $p_rss_b/1073741824;
+                    else printf \"%.1f MiB\", $p_rss_b/1048576;
+                }")
+                if (( p_gtt_b < 0 )); then
+                    gtt_h="N/A"
+                else
+                    gtt_h=$(awk "BEGIN {
+                        if ($p_gtt_b >= 1073741824) printf \"%.2f GiB\", $p_gtt_b/1073741824;
+                        else printf \"%.1f MiB\", $p_gtt_b/1048576;
+                    }")
+                fi
+
+                c_backend="$C_CYAN"
+                [[ "$p_back" == "ROCm/HIP" ]] && c_backend="$C_GREEN"
+
+                printf " %-7s %-16.16s ${C_WHITE}%-12s${C_RESET} %-10s ${c_backend}%-10s${C_RESET} %5s%%\033[K\n" \
+                    "$p_pid" "$p_cmd" "$mem_h" "$gtt_h" "$p_back" "$p_cpu"
+            done
+        fi
+
+        echo -e "${C_BOLD}${C_WHITE}========================================================================${C_RESET}\033[K"
+        marker_disp=""
+        [[ -n "$LAST_MARKER" ]] && marker_disp=" | ${C_GREEN}[Mark: ${LAST_MARKER}]${C_RESET}"
+        echo -e " ${C_DIM}[q] Quit  [r] Reset  [m] Mark  [+/-] Rate: ${REFRESH_SEC}s  [d] Details${C_RESET}${marker_disp}\033[K"
+        
+        printf "\033[J"
+    fi
+
+    # Interactive Keyboard Input
+    read -t "$REFRESH_SEC" -n 1 key || true
+    case "$key" in
+        q|Q) cleanup ;;
+        r|R) reset_session ;;
+        d|D) SHOW_DETAILS=$(( 1 - SHOW_DETAILS )); clear ;;
+        +) REFRESH_SEC=$(( REFRESH_SEC < 5 ? REFRESH_SEC + 1 : 5 )) ;;
+        -) REFRESH_SEC=$(( REFRESH_SEC > 1 ? REFRESH_SEC - 1 : 1 )) ;;
+        m|M)
+            marker_label="mark_$(date +%H%M%S)"
+            LAST_MARKER="$marker_label"
+            if [[ -n "$JSONL_FILE" ]]; then
+                echo "{\"timestamp\":$(date +%s),\"event\":\"marker\",\"label\":\"$marker_label\"}" >> "$JSONL_FILE"
+            fi
+            ;;
+    esac
+done

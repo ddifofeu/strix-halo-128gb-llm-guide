@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 — 2026-09-28
+
+- Added **halo-top 0.1.0**, the Strix Halo terminal telemetry/LLM bottleneck monitor used during the current Gufo and memory-bandwidth work.
+- Packaged **Bosgame M5 fan control 0.2** as a guarded CLI/GUI frontend for the three ec_su_axb35 fan channels.
+- Added a pinned upstream ec_su_axb35 driver installer, running-kernel GCC-family detection, Secure Boot guidance and conservative timed manual tests.
+- Added **docs/M5-TOOLS.md** with installation and first-use instructions for both tools.
+- Corrected halo-top packaging so ROCm/KFD allocation size is not mislabeled as a per-process GTT measurement; unavailable process GTT is shown as N/A.
+- Made halo-top memory-rate detection prefer the exposed maximum pp_dpm_mclk state, with an explicit HALO_MEM_MT_S override.
+
 ## 1.2.0 — 2026-09-27
 
 - Reversed the old 96 GiB-UMA recommendation after corrected-stack testing showed that **512 MiB BIOS UMA can run the tested 73–100 GiB GGUFs with zero swap**.
