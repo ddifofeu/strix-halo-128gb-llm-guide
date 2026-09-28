@@ -6,6 +6,10 @@ This repository includes two complementary tools developed and validated while t
 
 Source: **tools/halo-top/halo-top**
 
+![halo-top with Gufo loaded on a Bosgame M5](images/halo-top.png)
+
+Gufo is loaded at low GPU activity in this capture. Displayed bandwidth and token-rate estimates are not measured inference throughput.
+
 Install on Ubuntu 24.04+:
 
 ~~~bash

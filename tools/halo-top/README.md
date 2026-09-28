@@ -4,6 +4,10 @@
 
 The DRAM bandwidth value is an **estimate**, not a hardware byte counter. The current estimator scales the theoretical 256-bit LPDDR bandwidth by GPU busy %. Use it for relative saturation/bottleneck hints, not as a substitute for a controlled bandwidth benchmark such as gfx1151_peak.
 
+![halo-top with Gufo loaded on a Bosgame M5](../../docs/images/halo-top.png)
+
+Captured with Gufo loaded at low GPU activity; this is a UI example, not a throughput benchmark. DRAM bandwidth and token-rate estimates are heuristic; unavailable per-process GTT is shown as `N/A`. Window chrome was cropped without changing application pixels.
+
 ## Install on Ubuntu 24.04+
 
 ~~~bash
