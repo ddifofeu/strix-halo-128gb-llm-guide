@@ -4,6 +4,10 @@ A Linux CLI/desktop frontend for the three fan channels exposed by the community
 
 The installer fetches the upstream driver from **cmetz/ec-su_axb35-linux** and pins commit **f62c2c228959a08683273a26ef3afd8991e69f6d** for reproducibility. The driver remains GPL-2.0; this frontend is MIT licensed.
 
+![Bosgame M5 fan control GUI](../../docs/images/bosgame-m5-fans.png)
+
+Screenshot from the tested M5, cropped to remove window chrome; application pixels are unchanged.
+
 ## Validated platform
 
 Hardware validation performed on:
