@@ -135,6 +135,16 @@ The fair statement is now:
 - `docs/GUIDE.md` — detailed findings and caveats
 - `docs/METHODOLOGY.md` — methodology and interpretation rules
 
+## Bosgame M5 monitoring and fan tools
+
+The repository now also contains the two host tools used during the Strix Halo tuning campaign:
+
+- **tools/halo-top/** — read-only Strix Halo telemetry, memory-pressure and LLM bottleneck monitor with CSV/JSONL logging.
+- **tools/bosgame-m5-fans/** — guarded CLI/GUI fan control for the three channels exposed by the community ec_su_axb35 driver, with timed manual tests and automatic restore behavior.
+- **docs/M5-TOOLS.md** — installation and first-use guide for both tools.
+
+The fan tool is a custom frontend, not an official Bosgame utility. Its installer fetches the upstream GPL-2.0 EC driver at a pinned commit; the frontend and halo-top remain MIT-licensed parts of this repository.
+
 ## Important limitations
 
 - One physical Bosgame M5 / Ryzen AI MAX+ 395 / 128 GB machine was measured.
