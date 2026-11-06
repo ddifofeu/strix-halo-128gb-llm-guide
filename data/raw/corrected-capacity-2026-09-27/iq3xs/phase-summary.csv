@@ -1,0 +1,2 @@
+model,phase,load_mode,lazy_mode,status,wall_s,pp_tps,tg_tps,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta,time_max_rss_kb,time_major_faults,time_minor_faults,time_fs_inputs,time_fs_outputs
+qwen3-235b-iq3xs,capacity,auto,auto,pass,74.582,160.67,17.78,20820,0,482,93422,162,93556,3245746,5,0,0,94703726,18764,96976396288,19214336,162932,1,32017,189404336,8

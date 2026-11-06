@@ -3,7 +3,7 @@
 **Version:** 1.2 — 27 September 2026  
 **Scope:** Large GGUF inference with llama.cpp on a Bosgame M5 / Ryzen AI MAX+ 395 / 128 GB Strix Halo system.
 
-## Executive conclusion
+## Latest measured result (27 September 2026)
 
 The testing is sufficient to make an operational choice for this machine.
 
@@ -26,7 +26,7 @@ Load mode           none (no-mmap)
 Lazy mode           auto
 ```
 
-On Qwen3 235B-A22B IQ3_M (~99.95 GiB), this profile delivered **198.53 tok/s PP512, 17.34 tok/s TG128 and 62.84 tok/s combined** in the final Kyuz0 Vulkan run.
+On Qwen3 235B-A22B IQ3_M (~99.95 GiB), this profile delivered **198.53 tok/s PP512, 17.34 tok/s TG128 and 62.84 tok/s combined** in the latest Kyuz0 Vulkan run.
 
 The same llama.cpp build with ROCm 10.0 and `load-mode=none` delivered **188.03 PP512, 15.65 TG128 and 57.58 combined**. ROCm `load-mode=auto` showed pathological generation performance at 2.42 tok/s and is not recommended for this workload.
 
@@ -40,7 +40,7 @@ After moving to Linux 6.18.7, removing the external AMDGPU DKMS path, using the 
 
 Because multiple stack variables changed together, the experiment does not identify one single fix. It does establish that the old failure was **not an intrinsic 512 MiB UMA capacity limit**.
 
-## 2. Final host configuration
+## 2. Host configuration (27 September 2026)
 
 ### Hardware
 
@@ -62,7 +62,7 @@ Because multiple stack variables changed together, the experiment does not ident
 - Vulkan-reported memory: 127,488 MiB in the Fedora/RADV toolbox
 - ROCm-reported VRAM: 126,976 MiB
 
-Performance boot parameters used in the final campaign:
+Performance boot parameters used in the latest campaign:
 
 ```text
 amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=32505856
@@ -106,14 +106,14 @@ A controlled same-invocation A/B/C on the native Vulkan build produced:
 
 ### Kyuz0 no-mmap validation
 
-With the final Kyuz0 Vulkan stack, `load-mode=none` and `auto` were effectively tied:
+With the latest tested Kyuz0 Vulkan stack, `load-mode=none` and `auto` were effectively tied:
 
 | Vulkan load mode | PP512 | TG128 | Combined |
 |---|---:|---:|---:|
 | auto | 198.93 | 17.30 | 62.70 |
 | **none** | **198.53** | **17.34** | **62.84** |
 
-Kyuz0 recommends Flash Attention plus no-mmap on Strix Halo. Since no-mmap had no measurable throughput penalty here, the final profile uses `-fa on -lm none -lzm auto`.
+Kyuz0 recommends Flash Attention plus no-mmap on Strix Halo. Since no-mmap had no measurable throughput penalty here, the recommended profile uses `-fa on -lm none -lzm auto`.
 
 ## 5. TuneD and IOMMU
 
@@ -162,9 +162,9 @@ Combined     59.04 tok/s
 
 That is roughly **+18.4% PP, +1.5% TG and +5.9% combined**. The comparison changes more than Mesa alone (`libvulkan`, libc/libstdc++ and the Fedora userspace also differ), but llama.cpp itself is held constant and the newer RADV/Mesa stack is the dominant GPU-side change.
 
-## 7. Final backend comparison
+## 7. Backend comparison (27 September 2026)
 
-The final A/B used the same Fedora 44 base and the same llama.cpp build 11206 (`2b129ccfa`).
+The latest A/B used the same Fedora 44 base and the same llama.cpp build 11206 (`2b129ccfa`).
 
 | Backend | Load | PP512 | TG128 | Combined |
 |---|---|---:|---:|---:|
@@ -181,7 +181,7 @@ Against stable ROCm none, Vulkan none is approximately:
 
 ROCm 10.0 is functional on gfx1151 when `/dev/kfd` is correctly exposed. The direct Podman validation reported one ROCm device, gfx1151, wave size 32 and 126,976 MiB VRAM. The Distrobox interactive session on this Ubuntu host lost KFD permissions, so the ROCm benchmark was executed directly with rootless Podman + crun + `--group-add keep-groups`. This is a container integration issue, not a ROCm device failure.
 
-## 8. Final recommendation
+## 8. Recommendation (27 September 2026)
 
 For this Bosgame M5, stop tuning and use:
 
@@ -227,7 +227,7 @@ Reference benchmark:
   -r 5
 ```
 
-The repository benchmark harness v3.6 defaults to the final tuning values.
+The repository benchmark harness v3.6 defaults to these tuning values.
 
 ## 10. What the old UMA campaign still proves
 
@@ -242,8 +242,8 @@ This is a useful reminder that Strix Halo capacity is a property of the **whole 
 ## 11. Remaining limitations
 
 - One physical machine.
-- One ~100 GiB MoE model for the final Vulkan-vs-ROCm backend comparison.
-- No long-context 8K/32K/64K KV-cache characterization in the final profile.
+- One ~100 GiB MoE model for the Vulkan-vs-ROCm backend comparison.
+- No long-context 8K/32K/64K KV-cache characterization in the recommended profile.
 - No power-at-the-wall comparison.
 - No isolated experiment separating kernel 6.18.7, upstream AMDGPU, GTT 126976 and TTM 32505856.
 - Current validated capacity ends at ~100 GiB.

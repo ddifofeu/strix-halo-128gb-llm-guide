@@ -1,0 +1,2 @@
+model,quant,class,size_gib,gpu_layers,load_mode,lazy_mode,status,pp_tps,tg_tps,elapsed_s,min_mem_available_mb,max_swap_mb,max_vram_mb,max_gtt_mb,max_llama_rss_mb,max_llama_vsz_mb,vm_pgfault_delta,vm_pgmajfault_delta,vm_pswpin_delta,vm_pswpout_delta,vm_pgpgin_kib_delta,vm_pgpgout_kib_delta,nvme_read_bytes_delta,nvme_write_bytes_delta
+qwen3-235b-iq2m,IQ2_M,huge,73.16,99,auto,auto,pass,163.30,19.98,64.744,38475,0,493,75915,158,76055,3617303,226,0,81,76773742,11340,78615707648,11280384

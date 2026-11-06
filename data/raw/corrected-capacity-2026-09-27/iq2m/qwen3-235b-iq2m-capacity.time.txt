@@ -1,0 +1,23 @@
+	Command being timed: "timeout --signal=INT --kill-after=20s 600s ~/bin/llama-bench -m ~/LLM/models/qwen3-235b-iq2m/Qwen_Qwen3-235B-A22B-Instruct-2507-IQ2_M-00001-of-00002.gguf -ngl 99 -lm auto -lzm auto -p 512 -n 128 -r 3"
+	User time (seconds): 9.66
+	System time (seconds): 10.60
+	Percent of CPU this job got: 31%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:04.38
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 159380
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 201
+	Minor (reclaiming a frame) page faults: 31002
+	Voluntary context switches: 570222
+	Involuntary context switches: 623
+	Swaps: 0
+	File system inputs: 153541640
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

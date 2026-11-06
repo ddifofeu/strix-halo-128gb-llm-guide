@@ -4,7 +4,7 @@
 
 Measure practical local-LLM capacity and throughput on a 128 GB Strix Halo APU, then select a stable daily inference stack for the tested Bosgame M5.
 
-## Final host stack
+## Host stack (27 September 2026)
 
 - Ubuntu 24.04.5 LTS host
 - Linux 6.18.7
@@ -17,7 +17,7 @@ Measure practical local-LLM capacity and throughput on a 128 GB Strix Halo APU, 
 
 The older 6.17 / 112 GiB-GTT / external-driver measurements remain in `data/benchmarks.csv` as historical controls and must not be mixed causally with the corrected 6.18.7 stack.
 
-## Final Vulkan benchmark settings
+## Vulkan benchmark settings (27 September 2026)
 
 Unless explicitly labeled otherwise:
 
@@ -28,7 +28,7 @@ Unless explicitly labeled otherwise:
 -lzm auto
 PP512
 TG128
-5 repetitions for final backend comparisons
+5 repetitions for the backend comparisons
 ```
 
 The v3.6 harness records Flash Attention, load mode and lazy mode in its result files.
@@ -43,7 +43,7 @@ To estimate the effect of the newer userspace Vulkan stack, the same llama.cpp b
 
 ## Backend A/B
 
-The final Vulkan-vs-ROCm comparison used:
+The Vulkan-vs-ROCm comparison used:
 
 - Fedora 44 base
 - llama.cpp build 11206 / `2b129ccfa`
